@@ -101,6 +101,73 @@ final class AppModel: ObservableObject {
         }
     }
 
+    /// The single question most users are actually answering: where does
+    /// transcription happen? Modes exist to vary this per app, but that is an
+    /// advanced case, and making it the primary interface made basic setup a
+    /// scavenger hunt across four tabs.
+    enum TranscriptionSource: Equatable {
+        case onDevice
+        case cloud(providerId: String)
+    }
+
+    var transcriptionSource: TranscriptionSource {
+        get {
+            if allModesAreLocal { return .onDevice }
+            return .cloud(providerId: modes.first?.stt.providerId ?? "groq")
+        }
+        set {
+            switch newValue {
+            case .onDevice:
+                useLocalForAllModes()
+            case .cloud(let providerId):
+                useHostedForAllModes(providerId: providerId)
+            }
+        }
+    }
+
+    /// Whether every mode agrees on where transcription happens. When they do
+    /// not, the General tab says so rather than silently showing one of them.
+    var transcriptionIsUniform: Bool {
+        guard let first = modes.first?.stt.providerId else { return true }
+        return modes.allSatisfy { $0.stt.providerId == first }
+    }
+
+    /// Cleanup, applied across every mode. Per-mode overrides live in Modes.
+    var cleanupEnabledEverywhere: Bool {
+        !modes.isEmpty && modes.allSatisfy { $0.cleanup != nil }
+    }
+
+    func setCleanupEverywhere(_ enabled: Bool) {
+        modes = modes.map { mode in
+            var m = mode
+            if enabled {
+                m.cleanup =
+                    m.cleanup
+                    ?? LlmConfig(
+                        providerId: "groq", model: "openai/gpt-oss-120b",
+                        reasoningEffort: "low")
+            } else {
+                m.cleanup = nil
+            }
+            return m
+        }
+    }
+
+    func setCleanupModelEverywhere(providerId: String, model: String) {
+        modes = modes.map { mode in
+            var m = mode
+            guard m.cleanup != nil else { return m }
+            m.cleanup?.providerId = providerId
+            m.cleanup?.model = model
+            return m
+        }
+    }
+
+    var cleanupProviderId: String { modes.compactMap { $0.cleanup?.providerId }.first ?? "groq" }
+    var cleanupModel: String {
+        modes.compactMap { $0.cleanup?.model }.first ?? "openai/gpt-oss-120b"
+    }
+
     var allModesAreLocal: Bool {
         !modes.isEmpty
             && modes.allSatisfy { ["local", "whisperkit", "on-device"].contains($0.stt.providerId) }
@@ -169,6 +236,9 @@ final class AppModel: ObservableObject {
         // defaults, but a UI showing an empty list is just confusing.
         guard modes.count > 1 else { return }
         modes.removeAll { $0.id == mode.id }
+        if activeModeId == mode.id, let first = modes.first {
+            activeModeId = first.id
+        }
     }
 
     func resetModes() {

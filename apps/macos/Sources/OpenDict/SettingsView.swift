@@ -5,19 +5,206 @@ struct SettingsView: View {
     @ObservedObject var model: AppModel
 
     var body: some View {
+        // General first, and it answers the whole setup question on one screen.
+        // Modes are powerful but advanced; leading with them turned basic setup
+        // into a hunt across several tabs.
         TabView {
+            GeneralTab(model: model)
+                .tabItem { Label("General", systemImage: "gearshape") }
             ModesTab(model: model)
                 .tabItem { Label("Modes", systemImage: "square.stack.3d.up") }
             ProvidersTab(model: model)
                 .tabItem { Label("Providers", systemImage: "key") }
-            OnDeviceTab(model: model)
-                .tabItem { Label("On-Device", systemImage: "cpu") }
-            VocabularyTab(model: model)
-                .tabItem { Label("Vocabulary", systemImage: "text.book.closed") }
             GesturesTab()
                 .tabItem { Label("Gestures", systemImage: "hand.tap") }
         }
         .frame(width: 720, height: 520)
+    }
+}
+
+// MARK: - General
+
+struct GeneralTab: View {
+    @ObservedObject var model: AppModel
+    @State private var variant = Settings.localModelVariant
+        ?? WhisperKitTranscriber.suggestedVariants[0]
+    @State private var cloudProvider = "groq"
+    @State private var cleanupModel = ""
+    @State private var vocabularyText = ""
+
+    private var usesOnDevice: Bool { model.transcriptionSource == .onDevice }
+
+    var body: some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 22) {
+                // --- Transcription ------------------------------------------
+                VStack(alignment: .leading, spacing: 10) {
+                    Text("Transcription").font(.headline)
+                    if !model.transcriptionIsUniform {
+                        Label(
+                            "Your modes use different providers. Choosing here changes all of them.",
+                            systemImage: "info.circle"
+                        )
+                        .font(.caption).foregroundStyle(.secondary)
+                    }
+
+                    Picker("", selection: transcriptionBinding) {
+                        Text("On this Mac — private, no API key").tag(true)
+                        Text("Cloud provider").tag(false)
+                    }
+                    .pickerStyle(.radioGroup)
+                    .labelsHidden()
+
+                    if usesOnDevice {
+                        HStack {
+                            Picker("Model", selection: $variant) {
+                                ForEach(WhisperKitTranscriber.suggestedVariants, id: \.self) { v in
+                                    Text(WhisperKitTranscriber.displayName(v)).tag(v)
+                                }
+                            }
+                            .frame(maxWidth: 330)
+                            Button(model.localModelVariant == variant ? "Reload" : "Download") {
+                                model.enableLocalModel(variant: variant)
+                            }
+                            .disabled(isDownloading)
+                        }
+                        localStatus.padding(.leading, 2)
+                    } else {
+                        HStack {
+                            Picker("Provider", selection: $cloudProvider) {
+                                ForEach(KeychainStore.knownProviders, id: \.self) { p in
+                                    Text(p).tag(p)
+                                }
+                            }
+                            .frame(maxWidth: 220)
+                            .onChange(of: cloudProvider) { new in
+                                model.transcriptionSource = .cloud(providerId: new)
+                            }
+                            if model.hasKey(for: cloudProvider) {
+                                Label("key set", systemImage: "checkmark.circle.fill")
+                                    .font(.caption).foregroundStyle(.green)
+                            } else {
+                                Label("needs a key — set it in Providers", systemImage: "key")
+                                    .font(.caption).foregroundStyle(.orange)
+                            }
+                        }
+                    }
+                }
+
+                Divider()
+
+                // --- Cleanup -------------------------------------------------
+                VStack(alignment: .leading, spacing: 10) {
+                    Toggle(
+                        "Clean up with AI",
+                        isOn: Binding(
+                            get: { model.cleanupEnabledEverywhere },
+                            set: { model.setCleanupEverywhere($0) })
+                    )
+                    .font(.headline)
+                    Text(
+                        "Removes filler words, applies spoken corrections, and formats the text. "
+                            + "Adds roughly half a second and always sends the transcript to the "
+                            + "model you pick."
+                    )
+                    .font(.caption).foregroundStyle(.secondary)
+
+                    if model.cleanupEnabledEverywhere {
+                        HStack {
+                            TextField("openai/gpt-oss-120b", text: $cleanupModel)
+                                .textFieldStyle(.roundedBorder)
+                                .frame(maxWidth: 300)
+                            Button("Apply") {
+                                model.setCleanupModelEverywhere(
+                                    providerId: model.cleanupProviderId, model: cleanupModel)
+                            }
+                            Text("via \(model.cleanupProviderId)")
+                                .font(.caption).foregroundStyle(.secondary)
+                        }
+                    }
+                }
+
+                Divider()
+
+                // --- Vocabulary ----------------------------------------------
+                VStack(alignment: .leading, spacing: 8) {
+                    Text("Custom vocabulary").font(.headline)
+                    Text("Names and jargon that get misheard. One per line.")
+                        .font(.caption).foregroundStyle(.secondary)
+                    TextEditor(text: $vocabularyText)
+                        .font(.system(.body, design: .monospaced))
+                        .frame(height: 90)
+                        .overlay(
+                            RoundedRectangle(cornerRadius: 5)
+                                .stroke(Color.secondary.opacity(0.3)))
+                    HStack {
+                        Text("\(vocabularyTerms.count) terms")
+                            .font(.caption).foregroundStyle(.secondary)
+                        Spacer()
+                        Button("Save") { model.vocabulary = vocabularyTerms }
+                    }
+                }
+
+                Text(
+                    "These apply to every mode. The Modes tab can override them per app."
+                )
+                .font(.caption).foregroundStyle(.secondary)
+            }
+            .padding(20)
+        }
+        .onAppear {
+            vocabularyText = model.vocabulary.joined(separator: "\n")
+            cleanupModel = model.cleanupModel
+            if case .cloud(let p) = model.transcriptionSource { cloudProvider = p }
+        }
+    }
+
+    private var vocabularyTerms: [String] {
+        vocabularyText.split(whereSeparator: \.isNewline)
+            .map { $0.trimmingCharacters(in: .whitespaces) }
+            .filter { !$0.isEmpty }
+    }
+
+    private var transcriptionBinding: Binding<Bool> {
+        Binding(
+            get: { usesOnDevice },
+            set: { onDevice in
+                if onDevice {
+                    if model.localModelVariant == nil { model.enableLocalModel(variant: variant) }
+                    model.transcriptionSource = .onDevice
+                } else {
+                    model.transcriptionSource = .cloud(providerId: cloudProvider)
+                }
+            })
+    }
+
+    private var isDownloading: Bool {
+        switch model.localState {
+        case .loading, .downloading: return true
+        default: return false
+        }
+    }
+
+    @ViewBuilder private var localStatus: some View {
+        switch model.localState {
+        case .idle:
+            Text("no model downloaded yet").font(.caption).foregroundStyle(.secondary)
+        case .downloading(let p):
+            HStack(spacing: 6) {
+                ProgressView().controlSize(.small)
+                Text("downloading \(Int(p * 100))%").font(.caption)
+            }
+        case .loading:
+            HStack(spacing: 6) {
+                ProgressView().controlSize(.small)
+                Text("downloading and loading — slow the first time").font(.caption)
+            }
+        case .ready:
+            Label("ready — audio never leaves this Mac", systemImage: "checkmark.circle.fill")
+                .font(.caption).foregroundStyle(.green)
+        case .failed(let m):
+            Text(m).font(.caption).foregroundStyle(.red).lineLimit(2)
+        }
     }
 }
 
@@ -283,6 +470,17 @@ struct ModeEditor: View {
                             .font(.caption).foregroundStyle(.secondary)
                     }
                 }
+
+                Divider()
+                HStack {
+                    Button(role: .destructive) {
+                        model.delete(mode)
+                    } label: {
+                        Label("Delete this mode", systemImage: "trash")
+                    }
+                    .disabled(model.modes.count <= 1)
+                    Spacer()
+                }
             }
             .padding(20)
         }
@@ -293,25 +491,53 @@ struct ModeEditor: View {
 
 struct ProvidersTab: View {
     @ObservedObject var model: AppModel
+    @State private var showAll = false
+
+    /// Providers a mode actually references, plus any that already have a key.
+    /// Showing all seven rows unconditionally made this tab mostly noise.
+    private var inUse: [String] {
+        var ids = Set(model.modes.map(\.stt.providerId))
+        ids.formUnion(model.modes.compactMap { $0.cleanup?.providerId })
+        ids.formUnion(KeychainStore.knownProviders.filter { model.hasKey(for: $0) })
+        ids.subtract(["local", "whisperkit", "on-device"])
+        return ids.sorted()
+    }
+
+    private var others: [String] {
+        let shown = Set(inUse)
+        return (KeychainStore.knownProviders + ["ollama", "lmstudio", "vllm"])
+            .filter { !shown.contains($0) }
+    }
 
     var body: some View {
         ScrollView {
-            VStack(alignment: .leading, spacing: 20) {
+            VStack(alignment: .leading, spacing: 16) {
                 Text("Keys are stored in your login keychain and sent only to the provider they belong to.")
                     .font(.callout).foregroundStyle(.secondary)
-                ForEach(KeychainStore.knownProviders, id: \.self) { provider in
+
+                if inUse.isEmpty {
+                    Text("Nothing to configure — you are running fully on-device.")
+                        .font(.callout).foregroundStyle(.secondary)
+                }
+                ForEach(inUse, id: \.self) { provider in
                     ProviderRow(model: model, provider: provider)
                 }
-                Divider()
-                Text(
-                    "Any OpenAI-compatible endpoint works: set a mode's provider to the id below "
-                        + "and give it a base URL. Local servers such as Ollama, LM Studio, and "
-                        + "vLLM need no key."
-                )
-                .font(.caption).foregroundStyle(.secondary)
-                ForEach(["ollama", "lmstudio", "vllm"], id: \.self) { provider in
-                    ProviderRow(model: model, provider: provider, keyOptional: true)
+
+                DisclosureGroup("Other providers", isExpanded: $showAll) {
+                    VStack(alignment: .leading, spacing: 12) {
+                        Text(
+                            "Any OpenAI-compatible endpoint works. Local servers such as Ollama, "
+                                + "LM Studio, and vLLM need no key — set a base URL if yours is "
+                                + "not on the default port."
+                        )
+                        .font(.caption).foregroundStyle(.secondary)
+                        ForEach(others, id: \.self) { provider in
+                            ProviderRow(model: model, provider: provider, keyOptional: true)
+                        }
+                    }
+                    .padding(.top, 8)
                 }
+                .font(.callout)
             }
             .padding(20)
         }
@@ -326,6 +552,7 @@ struct ProviderRow: View {
     @State private var key = ""
     @State private var baseUrl = ""
     @State private var status: String?
+    @State private var showEndpoint = false
 
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
@@ -350,17 +577,24 @@ struct ProviderRow: View {
                 }
                 .disabled(key.isEmpty)
             }
-            HStack {
-                TextField("Base URL (leave empty for the default)", text: $baseUrl)
-                    .textFieldStyle(.roundedBorder)
-                    .onSubmit { model.setBaseUrl(baseUrl, for: provider) }
-                Button("Save") { model.setBaseUrl(baseUrl, for: provider) }
+            DisclosureGroup("Custom endpoint", isExpanded: $showEndpoint) {
+                HStack {
+                    TextField("Base URL (empty uses the default)", text: $baseUrl)
+                        .textFieldStyle(.roundedBorder)
+                        .onSubmit { model.setBaseUrl(baseUrl, for: provider) }
+                    Button("Save") { model.setBaseUrl(baseUrl, for: provider) }
+                }
+                .padding(.top, 6)
             }
+            .font(.caption)
         }
         .padding(12)
         .background(Color.secondary.opacity(0.06))
         .clipShape(RoundedRectangle(cornerRadius: 8))
-        .onAppear { baseUrl = Settings.baseUrl(for: provider) }
+        .onAppear {
+            baseUrl = Settings.baseUrl(for: provider)
+            showEndpoint = !baseUrl.isEmpty
+        }
     }
 
     private func test() {
@@ -373,150 +607,6 @@ struct ProviderRow: View {
                 status = AppDelegate.describe(error)
             }
         }
-    }
-}
-
-// MARK: - On-device
-
-struct OnDeviceTab: View {
-    @ObservedObject var model: AppModel
-    @State private var variant = Settings.localModelVariant
-        ?? WhisperKitTranscriber.suggestedVariants[0]
-
-    var body: some View {
-        ScrollView {
-            VStack(alignment: .leading, spacing: 16) {
-                Text("Transcribe entirely on this Mac")
-                    .font(.headline)
-                Text(
-                    "WhisperKit runs Whisper on the Neural Engine. No API key, no network, "
-                        + "no per-word cost, and your audio never leaves the device. Models are "
-                        + "large, so nothing is downloaded until you choose one."
-                )
-                .font(.callout).foregroundStyle(.secondary)
-
-                Picker("Model", selection: $variant) {
-                    ForEach(WhisperKitTranscriber.suggestedVariants, id: \.self) { v in
-                        Text(WhisperKitTranscriber.displayName(v)).tag(v)
-                    }
-                }
-
-                HStack(spacing: 10) {
-                    Button(model.localModelVariant == nil ? "Download and Enable" : "Switch Model")
-                    {
-                        model.enableLocalModel(variant: variant)
-                    }
-                    .disabled(isBusy)
-
-                    if model.localModelVariant != nil {
-                        Button("Turn Off") { model.disableLocalModel() }
-                    }
-                    statusView
-                }
-
-                Divider()
-
-                VStack(alignment: .leading, spacing: 8) {
-                    Text("Using it").font(.headline)
-                    Text(
-                        "Turning the model on does not change your existing modes. Each mode "
-                            + "keeps its own transcription provider, and a mode that matches the "
-                            + "app you are in wins over the Private preset — which matches no "
-                            + "apps at all."
-                    )
-                    .font(.callout).foregroundStyle(.secondary)
-
-                    HStack {
-                        Button("Use On-Device for All Modes") { model.useLocalForAllModes() }
-                            .disabled(model.localModelVariant == nil || model.allModesAreLocal)
-                        Button("Switch All Back to Groq") { model.useHostedForAllModes() }
-                        Spacer()
-                    }
-
-                    Text(
-                        "Or set a single mode's provider to \"local\" in the Modes tab. The "
-                            + "Private preset does that and turns the cleanup model off too, so "
-                            + "nothing at all leaves the machine."
-                    )
-                    .font(.callout).foregroundStyle(.secondary)
-                    Button("Add Private Mode") { model.addPrivateMode() }
-                        .disabled(model.modes.contains { $0.id == "private" })
-                    Text(
-                        "On-device modes never silently fall back to a hosted provider. If the "
-                            + "model is not loaded they report an error instead, because a mode "
-                            + "chosen for privacy must not quietly send audio to a server."
-                    )
-                    .font(.caption).foregroundStyle(.secondary)
-                }
-                Spacer()
-            }
-            .padding(20)
-        }
-    }
-
-    private var isBusy: Bool {
-        switch model.localState {
-        case .loading, .downloading: return true
-        default: return false
-        }
-    }
-
-    @ViewBuilder private var statusView: some View {
-        switch model.localState {
-        case .idle:
-            Text("off").font(.caption).foregroundStyle(.secondary)
-        case .downloading(let progress):
-            HStack(spacing: 6) {
-                ProgressView().controlSize(.small)
-                Text("downloading \(Int(progress * 100))%").font(.caption)
-            }
-        case .loading:
-            HStack(spacing: 6) {
-                ProgressView().controlSize(.small)
-                Text("downloading and loading — this takes a while the first time")
-                    .font(.caption)
-            }
-        case .ready(let name):
-            Text("ready · \(name)").font(.caption).foregroundStyle(.green)
-        case .failed(let message):
-            Text(message).font(.caption).foregroundStyle(.red).lineLimit(2)
-        }
-    }
-}
-
-// MARK: - Vocabulary
-
-struct VocabularyTab: View {
-    @ObservedObject var model: AppModel
-    @State private var text = ""
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            Text("Names, jargon, and product names to bias transcription toward.")
-                .font(.callout)
-            TextEditor(text: $text)
-                .font(.system(.body, design: .monospaced))
-                .overlay(RoundedRectangle(cornerRadius: 5).stroke(Color.secondary.opacity(0.3)))
-            Text(
-                "One term per line. Providers cap how much of this they use — Whisper reads "
-                    + "only the last ~224 tokens — so keep it to terms that actually get "
-                    + "misheard rather than a glossary."
-            )
-            .font(.caption).foregroundStyle(.secondary)
-            HStack {
-                Text("\(terms.count) terms").font(.caption).foregroundStyle(.secondary)
-                Spacer()
-                Button("Save") { model.vocabulary = terms }
-            }
-        }
-        .padding(20)
-        .onAppear { text = model.vocabulary.joined(separator: "\n") }
-    }
-
-    private var terms: [String] {
-        text.split(whereSeparator: \.isNewline)
-            .map { $0.trimmingCharacters(in: .whitespaces) }
-            .filter { !$0.isEmpty }
     }
 }
 
