@@ -1,0 +1,37 @@
+[package]
+name = "opendict-core"
+description = "Portable dictation pipeline: capture -> transcribe -> clean up -> insert."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[lib]
+crate-type = ["lib", "cdylib", "staticlib"]
+name = "opendict_core"
+
+[[bin]]
+name = "uniffi-bindgen"
+required-features = ["uniffi-cli"]
+
+[dependencies]
+anyhow.workspace = true
+async-trait.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+tokio.workspace = true
+tracing.workspace = true
+uniffi = { workspace = true, features = ["tokio"] }
+# rustls with the *ring* provider, not the default aws-lc-rs. aws-lc-sys is a
+# large C/asm dependency that needs NASM on Windows and mis-links on iOS without
+# careful deployment-target flags. ring ships pregenerated assembly and
+# cross-compiles cleanly to every target we care about.
+reqwest = { version = "0.13", default-features = false, features = ["json", "multipart", "charset", "http2", "rustls-no-provider", "webpki-roots"] }
+rustls = { version = "0.23", default-features = false, features = ["ring", "std", "tls12", "logging"] }
+
+[features]
+uniffi-cli = ["uniffi/cli"]
+
+[dev-dependencies]
+tokio = { version = "1", features = ["full"] }

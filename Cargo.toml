@@ -1,0 +1,24 @@
+[workspace]
+members = ["crates/opendict-core", "crates/opendict-cli"]
+resolver = "2"
+
+[workspace.package]
+version = "0.0.1"
+edition = "2021"
+license = "Apache-2.0"
+repository = "https://github.com/NathanFeeser/opendict"
+
+[workspace.dependencies]
+anyhow = "1"
+async-trait = "0.1"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+thiserror = "2"
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "sync", "time"] }
+tracing = "0.1"
+uniffi = "0.32"
+
+[profile.release]
+lto = true
+codegen-units = 1
+strip = true

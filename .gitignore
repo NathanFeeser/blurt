@@ -1,0 +1,15 @@
+target/
+*.xcframework/
+bindings/
+build/
+.DS_Store
+*.wav
+!crates/opendict-core/tests/fixtures/*.wav
+.env
+.env.*
+!.env.example
+
+# macOS app build outputs (staged copies of the Rust core)
+apps/macos/Frameworks/
+apps/macos/Sources/OpenDictCore/opendict_core.swift
+apps/macos/.build/

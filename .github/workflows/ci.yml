@@ -1,0 +1,56 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+env:
+  CARGO_TERM_COLOR: always
+  RUSTFLAGS: -D warnings
+
+jobs:
+  core:
+    name: core (fmt, clippy, test)
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo fmt --all -- --check
+      - run: cargo clippy --all-targets --all-features -- -D warnings
+      - run: cargo test --all
+
+  ffi:
+    name: swift boundary (xcframework + smoke test)
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-apple-darwin,x86_64-apple-darwin,aarch64-apple-ios,aarch64-apple-ios-sim,x86_64-apple-ios
+      - uses: Swatinem/rust-cache@v2
+      - name: Build XCFramework
+        run: ./scripts/build-xcframework.sh
+      - name: Run Swift smoke test
+        run: ./scripts/swift-smoke.sh
+      - uses: actions/upload-artifact@v4
+        with:
+          name: OpenDictCore.xcframework
+          path: build/OpenDictCore.xcframework
+          retention-days: 7
+
+  # The whole justification for a Rust core is that Windows is a UI project
+  # rather than a rewrite. That claim decays silently unless it is compiled on
+  # every push, well before anyone starts Phase 4.
+  windows:
+    name: windows (core builds)
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo build -p opendict-core
+      - run: cargo test -p opendict-core

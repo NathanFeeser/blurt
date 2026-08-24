@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <!-- Required. Under the hardened runtime, microphone access is blocked
+         *before* TCC is consulted unless this entitlement is present — so the
+         app never prompts and never appears in the Microphone list at all.
+         That failure is completely silent, which makes it easy to misdiagnose
+         as a bug in the audio code. -->
+    <key>com.apple.security.device.audio-input</key>
+    <true/>
+
+    <!-- Deliberately absent: com.apple.security.app-sandbox.
+         The Accessibility APIs this app depends on require an unsandboxed
+         process. See docs/RESEARCH.md §3. -->
+</dict>
+</plist>
