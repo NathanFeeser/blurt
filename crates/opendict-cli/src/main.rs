@@ -66,6 +66,26 @@ enum Command {
         #[arg(long)]
         json: bool,
     },
+    /// Run only the cleanup stage on text supplied directly. Used by the eval
+    /// harness so it scores the production prompt rather than a copy of it.
+    Cleanup {
+        text: String,
+        #[arg(long)]
+        llm_provider: Option<String>,
+        #[arg(long)]
+        llm_model: Option<String>,
+        /// low | medium | high | none
+        #[arg(long)]
+        reasoning_effort: Option<String>,
+        #[arg(long)]
+        app: Option<String>,
+        #[arg(long)]
+        context: Option<String>,
+        /// Bypass the skip gate so every case actually reaches the model.
+        #[arg(long)]
+        no_skip: bool,
+    },
+
     /// Check that a provider's credentials work.
     Check { provider: String },
     /// List known provider ids and their default endpoints.
@@ -185,6 +205,59 @@ async fn main() -> Result<()> {
                 std::process::exit(1);
             }
         },
+
+        Command::Cleanup {
+            text,
+            llm_provider,
+            llm_model,
+            reasoning_effort,
+            app,
+            context,
+            no_skip,
+        } => {
+            let mut m = Mode::default_dictation();
+            if let Some(c) = m.cleanup.as_mut() {
+                if let Some(p) = llm_provider {
+                    c.provider_id = p;
+                }
+                if let Some(x) = llm_model {
+                    c.model = x;
+                }
+                match reasoning_effort.as_deref() {
+                    Some("none") => c.reasoning_effort = None,
+                    Some(e) => c.reasoning_effort = Some(e.to_string()),
+                    None => {}
+                }
+            }
+            m.allow_cleanup_skip = !no_skip;
+            m.id = "cli".into();
+            engine.set_modes(vec![m]);
+            engine.set_active_mode("cli".into())?;
+
+            let ctx = AppContext {
+                bundle_id: app.clone(),
+                app_name: app,
+                window_title: None,
+                surrounding_text: context,
+                selected_text: None,
+            };
+
+            let result = engine
+                .clean_up_text(text, ctx)
+                .await
+                .inspect_err(|e| explain_missing_credentials(e, dotenv_path.as_deref()))?;
+
+            println!(
+                "{}",
+                serde_json::json!({
+                    "raw_text": result.raw_text,
+                    "final_text": result.final_text,
+                    "cleanup_ran": result.cleanup_ran,
+                    "cleanup_error": result.cleanup_error,
+                    "cleanup_ms": result.timings.cleanup_ms,
+                })
+            );
+        }
 
         Command::Transcribe {
             file,

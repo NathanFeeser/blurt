@@ -116,45 +116,9 @@ pub async fn run_dictation(
         });
     }
 
-    let mut cleanup_ms = 0;
-    let mut cleanup_ran = false;
-    let mut cleanup_error = None;
-    let mut final_text = raw_text.clone();
-
-    if let Some(llm) = &stages.cleanup {
-        let should_run = !mode.allow_cleanup_skip || needs_cleanup(&raw_text);
-        if should_run {
-            let t = std::time::Instant::now();
-            let req = build_cleanup_request(&raw_text, mode, ctx);
-            match llm.complete(req).await {
-                Ok(cleaned) => {
-                    let candidate = sanitize_llm_output(&cleaned, &raw_text);
-                    if dropped_too_much(&raw_text, &candidate) {
-                        // Losing half a sentence is the worst failure this app
-                        // can have: it looks like a successful dictation. Keep
-                        // the raw transcript and say so.
-                        tracing::warn!("cleanup dropped too much text; keeping the raw transcript");
-                        cleanup_error = Some(
-                            "cleanup returned far less text than was dictated; \
-                             kept the raw transcript"
-                                .into(),
-                        );
-                    } else {
-                        final_text = candidate;
-                        cleanup_ran = true;
-                    }
-                }
-                Err(e) => {
-                    // Degrade, don't fail. The user said something; giving them
-                    // the raw transcript beats an error dialog and lost words.
-                    // But record why, so the shell can show it.
-                    tracing::warn!(error = %e, "cleanup failed; falling back to raw transcript");
-                    cleanup_error = Some(e.to_string());
-                }
-            }
-            cleanup_ms = t.elapsed().as_millis() as u64;
-        }
-    }
+    let cleaned = clean_up(&raw_text, stages, mode, ctx).await;
+    let (final_text, cleanup_ran, cleanup_error, cleanup_ms) =
+        (cleaned.text, cleaned.ran, cleaned.error, cleaned.elapsed_ms);
 
     Ok(DictationResult {
         raw_text,
@@ -172,6 +136,67 @@ pub async fn run_dictation(
             total_ms: started.elapsed().as_millis() as u64,
         },
     })
+}
+
+/// Outcome of the cleanup stage on its own.
+pub struct Cleaned {
+    pub text: String,
+    pub ran: bool,
+    pub error: Option<String>,
+    pub elapsed_ms: u64,
+}
+
+/// Run the cleanup stage against an already-transcribed string.
+///
+/// Public so the eval harness can score cleanup without audio, which removes
+/// STT variance from the measurement. Sharing this function with
+/// `run_dictation` is the point: an eval that scores a reimplementation of the
+/// prompt is scoring the wrong thing.
+pub async fn clean_up(raw_text: &str, stages: &Stages, mode: &Mode, ctx: &AppContext) -> Cleaned {
+    let mut out = Cleaned {
+        text: raw_text.to_string(),
+        ran: false,
+        error: None,
+        elapsed_ms: 0,
+    };
+
+    let Some(llm) = &stages.cleanup else {
+        return out;
+    };
+    if mode.allow_cleanup_skip && !needs_cleanup(raw_text) {
+        return out;
+    }
+
+    let started = std::time::Instant::now();
+    match llm
+        .complete(build_cleanup_request(raw_text, mode, ctx))
+        .await
+    {
+        Ok(cleaned) => {
+            let candidate = sanitize_llm_output(&cleaned, raw_text);
+            if dropped_too_much(raw_text, &candidate) {
+                // Losing half a sentence is the worst failure this app can
+                // have: it looks like a successful dictation. Keep the raw
+                // transcript and say so.
+                tracing::warn!("cleanup dropped too much text; keeping the raw transcript");
+                out.error = Some(
+                    "cleanup returned far less text than was dictated; kept the raw transcript"
+                        .into(),
+                );
+            } else {
+                out.text = candidate;
+                out.ran = true;
+            }
+        }
+        Err(e) => {
+            // Degrade, don't fail. The user said something; giving them the raw
+            // transcript beats an error dialog and lost words. But record why.
+            tracing::warn!(error = %e, "cleanup failed; falling back to raw transcript");
+            out.error = Some(e.to_string());
+        }
+    }
+    out.elapsed_ms = started.elapsed().as_millis() as u64;
+    out
 }
 
 /// Command mode: transcribe the spoken instruction, apply it to the selection.

@@ -13,3 +13,7 @@ build/
 apps/macos/Frameworks/
 apps/macos/Sources/OpenDictCore/opendict_core.swift
 apps/macos/.build/
+
+# Eval run artifacts (regenerate with eval/run.py)
+eval/results.json
+eval/full-run.log

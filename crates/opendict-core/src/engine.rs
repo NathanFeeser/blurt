@@ -142,6 +142,32 @@ impl DictationEngine {
         pipeline::run_command(&samples, &stages, &mode, &ctx, &vocab).await
     }
 
+    /// Run only the cleanup stage against text that is already transcribed.
+    ///
+    /// Exists for the eval harness: scoring cleanup without audio removes STT
+    /// variance from the measurement, which matters a great deal on a free tier
+    /// where identical clips vary by a factor of three.
+    pub async fn clean_up_text(&self, text: String, ctx: AppContext) -> Result<DictationResult> {
+        let (mode, stages, _) = self.prepare(&ctx)?;
+        let cleaned = pipeline::clean_up(&text, &stages, &mode, &ctx).await;
+        Ok(DictationResult {
+            raw_text: text,
+            final_text: cleaned.text,
+            cleanup_ran: cleaned.ran,
+            cleanup_error: cleaned.error,
+            audio_duration_ms: 0,
+            detected_language: None,
+            stt_provider: "none".into(),
+            stt_model: "none".into(),
+            timings: crate::pipeline::Timings {
+                encode_ms: 0,
+                stt_ms: 0,
+                cleanup_ms: cleaned.elapsed_ms,
+                total_ms: cleaned.elapsed_ms,
+            },
+        })
+    }
+
     /// Cheap reachability check for the settings UI, so users find out their key
     /// is wrong before they're mid-sentence.
     pub async fn check_credentials(&self, provider_id: String) -> Result<bool> {
