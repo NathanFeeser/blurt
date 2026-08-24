@@ -196,9 +196,20 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             preferAccessibility: Settings.preferAccessibilityInsert
         )
         Diag.log(
-            "inserted via \(method.rawValue): \(result.finalText.count) chars, "
-                + "\(result.timings.totalMs)ms "
+            "inserted via \(method.rawValue): "
+                + "raw \(result.rawText.count) -> final \(result.finalText.count) chars, "
+                + "audio \(result.audioDurationMs)ms, total \(result.timings.totalMs)ms "
                 + "(stt \(result.timings.sttMs)ms, cleanup \(result.timings.cleanupMs)ms)")
+        // Surfaced separately because it is the signature of the failure that is
+        // hardest to notice: text that looks fine but is missing half of what
+        // was said.
+        if result.cleanupRan, result.finalText.count * 2 < result.rawText.count,
+            result.rawText.count > 200
+        {
+            Diag.log("  WARNING cleanup shortened the text by more than half")
+            Diag.log("  raw: \(result.rawText)")
+            Diag.log("  final: \(result.finalText)")
+        }
 
         // Cleanup failing is not fatal — the raw transcript was inserted — but
         // it must be visible, or a dead model looks exactly like a working one.

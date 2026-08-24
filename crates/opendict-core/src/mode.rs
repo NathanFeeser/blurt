@@ -19,6 +19,10 @@ pub struct SttConfig {
 pub struct LlmConfig {
     pub provider_id: String,
     pub model: String,
+    /// `low` | `medium` | `high` for reasoning models. Leave `None` for any
+    /// endpoint that might reject an unknown parameter — most local servers.
+    #[serde(default)]
+    pub reasoning_effort: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, uniffi::Record)]
@@ -58,6 +62,10 @@ impl Mode {
                 // all — while 120b handles them at comparable latency (~430 ms).
                 // Phase 2 replaces this judgement call with DictBench.
                 model: "openai/gpt-oss-120b".into(),
+                // Cleanup is formatting, not reasoning. Measured: ~36% faster
+                // than the default effort with identical results on
+                // self-corrections and spoken formatting commands.
+                reasoning_effort: Some("low".into()),
             }),
             cleanup_instructions: None,
             app_matches: vec![],

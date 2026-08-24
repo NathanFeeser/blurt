@@ -128,8 +128,21 @@ pub async fn run_dictation(
             let req = build_cleanup_request(&raw_text, mode, ctx);
             match llm.complete(req).await {
                 Ok(cleaned) => {
-                    final_text = sanitize_llm_output(&cleaned, &raw_text);
-                    cleanup_ran = true;
+                    let candidate = sanitize_llm_output(&cleaned, &raw_text);
+                    if dropped_too_much(&raw_text, &candidate) {
+                        // Losing half a sentence is the worst failure this app
+                        // can have: it looks like a successful dictation. Keep
+                        // the raw transcript and say so.
+                        tracing::warn!("cleanup dropped too much text; keeping the raw transcript");
+                        cleanup_error = Some(
+                            "cleanup returned far less text than was dictated; \
+                             kept the raw transcript"
+                                .into(),
+                        );
+                    } else {
+                        final_text = candidate;
+                        cleanup_ran = true;
+                    }
                 }
                 Err(e) => {
                     // Degrade, don't fail. The user said something; giving them
@@ -228,6 +241,25 @@ pub async fn run_command(
     })
 }
 
+/// Did cleanup lose a substantial part of what the user said?
+///
+/// Only applied to longer dictations. Short utterances legitimately shrink a
+/// lot — "Um, so I was thinking we could ship on Tuesday. Wait, no, Friday."
+/// correctly becomes "We could ship Friday.", a third of the length — so a
+/// ratio check on short input would fire constantly on correct output. Over a
+/// few hundred characters, though, no honest cleanup halves the text; that is a
+/// model deciding to summarise.
+fn dropped_too_much(raw: &str, cleaned: &str) -> bool {
+    /// Below this, self-corrections dominate and big shrinkage is normal.
+    const MIN_CHARS_TO_CHECK: usize = 400;
+
+    let raw_len = raw.chars().count();
+    if raw_len < MIN_CHARS_TO_CHECK {
+        return false;
+    }
+    cleaned.chars().count() * 2 < raw_len
+}
+
 /// Strip the wrappers small models habitually add, and refuse output that is
 /// obviously not a cleanup of the input.
 ///
@@ -299,6 +331,34 @@ fn strip_reasoning(s: &str) -> Option<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn short_utterances_may_shrink_a_lot() {
+        // A real self-correction, correctly cleaned down to a third.
+        let raw = "Um, so I was thinking we could ship on Tuesday. Wait, no, Friday.";
+        assert!(!dropped_too_much(raw, "We could ship Friday."));
+    }
+
+    #[test]
+    fn long_dictations_must_not_halve() {
+        let raw = "word ".repeat(120); // 600 chars
+        assert!(
+            dropped_too_much(&raw, &"word ".repeat(40)),
+            "a summary must be rejected"
+        );
+        assert!(
+            !dropped_too_much(&raw, &"word ".repeat(100)),
+            "normal tidying is fine"
+        );
+    }
+
+    #[test]
+    fn the_guard_ignores_short_input_entirely() {
+        assert!(!dropped_too_much(
+            "a short sentence that got much shorter",
+            "short"
+        ));
+    }
 
     #[test]
     fn strips_reasoning_blocks() {

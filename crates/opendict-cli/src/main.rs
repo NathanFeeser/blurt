@@ -41,6 +41,10 @@ enum Command {
         /// Cleanup provider id. Pass `none` to skip the LLM stage.
         #[arg(long)]
         llm_provider: Option<String>,
+        /// Reasoning effort for models that support it: low, medium, high.
+        /// Pass `none` to omit the parameter, which most local servers require.
+        #[arg(long)]
+        reasoning_effort: Option<String>,
         #[arg(long)]
         llm_model: Option<String>,
         /// BCP-47 language tag. Omit to auto-detect.
@@ -189,6 +193,7 @@ async fn main() -> Result<()> {
             stt_model,
             llm_provider,
             llm_model,
+            reasoning_effort,
             language,
             app,
             context,
@@ -229,6 +234,10 @@ async fn main() -> Result<()> {
                     m.cleanup = Some(opendict_core::LlmConfig {
                         provider_id: p.to_string(),
                         model,
+                        reasoning_effort: m
+                            .cleanup
+                            .as_ref()
+                            .and_then(|c| c.reasoning_effort.clone()),
                     });
                 }
                 None => {
@@ -236,6 +245,19 @@ async fn main() -> Result<()> {
                         c.model = x;
                     }
                 }
+            }
+            match reasoning_effort.as_deref() {
+                Some("none") => {
+                    if let Some(c) = m.cleanup.as_mut() {
+                        c.reasoning_effort = None;
+                    }
+                }
+                Some(effort) => {
+                    if let Some(c) = m.cleanup.as_mut() {
+                        c.reasoning_effort = Some(effort.to_string());
+                    }
+                }
+                None => {}
             }
             m.allow_cleanup_skip = !no_skip;
             m.id = "cli".into();

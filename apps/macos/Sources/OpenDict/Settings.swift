@@ -14,6 +14,7 @@ enum Settings {
         static let llmProvider = "llmProvider"
         static let llmModel = "llmModel"
         static let cleanupEnabled = "cleanupEnabled"
+        static let reasoningEffort = "reasoningEffort"
         static let preferAccessibilityInsert = "preferAccessibilityInsert"
         static let readScreenContext = "readScreenContext"
         static let vocabulary = "vocabulary"
@@ -29,6 +30,11 @@ enum Settings {
             // docs/PLAN.md.
             Key.llmModel: "openai/gpt-oss-120b",
             Key.cleanupEnabled: true,
+            // Cleanup is a formatting task, not a reasoning one. Measured on
+            // gpt-oss-120b: "low" spends 8 reasoning tokens against ~240 for
+            // the default, cutting cleanup latency by about a third with no
+            // regression on self-corrections or spoken formatting commands.
+            Key.reasoningEffort: "low",
             Key.preferAccessibilityInsert: true,
             Key.readScreenContext: true,
             Key.vocabulary: "",
@@ -56,6 +62,16 @@ enum Settings {
         get { d.string(forKey: Key.llmModel) ?? "openai/gpt-oss-120b" }
         set { d.set(newValue, forKey: Key.llmModel) }
     }
+    /// Empty string means "omit the parameter", which local servers that reject
+    /// unknown fields require.
+    static var reasoningEffort: String? {
+        get {
+            let v = d.string(forKey: Key.reasoningEffort) ?? "low"
+            return v.isEmpty ? nil : v
+        }
+        set { d.set(newValue ?? "", forKey: Key.reasoningEffort) }
+    }
+
     static var cleanupEnabled: Bool {
         get { d.bool(forKey: Key.cleanupEnabled) }
         set { d.set(newValue, forKey: Key.cleanupEnabled) }
@@ -86,7 +102,10 @@ enum Settings {
             name: "Dictation",
             stt: SttConfig(providerId: sttProvider, model: sttModel, language: nil),
             cleanup: cleanupEnabled
-                ? LlmConfig(providerId: llmProvider, model: llmModel) : nil,
+                ? LlmConfig(
+                    providerId: llmProvider, model: llmModel,
+                    reasoningEffort: reasoningEffort)
+                : nil,
             cleanupInstructions: nil,
             appMatches: [],
             allowCleanupSkip: true

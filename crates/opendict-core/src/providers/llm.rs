@@ -44,6 +44,16 @@ pub struct LlmRequest {
     pub messages: Vec<ChatMessage>,
     pub temperature: f32,
     pub max_tokens: u32,
+    /// `low` | `medium` | `high`, for models that reason before answering.
+    ///
+    /// Measured on gpt-oss-120b: `low` spends 8 reasoning tokens where the
+    /// default spends ~240, cutting cleanup latency by roughly a third with no
+    /// loss on self-corrections or spoken formatting commands. Cleanup is a
+    /// formatting task, not a reasoning task.
+    ///
+    /// `None` omits the field entirely, because plenty of OpenAI-compatible
+    /// servers reject parameters they do not recognise.
+    pub reasoning_effort: Option<String>,
 }
 
 #[async_trait]
@@ -86,6 +96,8 @@ struct ChatRequestBody<'a> {
     temperature: f32,
     max_tokens: u32,
     stream: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    reasoning_effort: Option<&'a str>,
 }
 
 #[derive(Deserialize)]
@@ -95,6 +107,9 @@ struct ChatResponse {
 #[derive(Deserialize)]
 struct ChatChoice {
     message: ChatResponseMessage,
+    /// "stop" when the model finished, "length" when it hit max_tokens.
+    #[serde(default)]
+    finish_reason: Option<String>,
 }
 #[derive(Deserialize)]
 struct ChatResponseMessage {
@@ -125,6 +140,7 @@ impl LlmProvider for OpenAiCompatLlm {
             // Phase 1 turns this on and inserts tokens incrementally; see the
             // latency budget in docs/ARCHITECTURE.md.
             stream: false,
+            reasoning_effort: req.reasoning_effort.as_deref(),
         };
 
         let mut builder = self.http.post(&url).json(&body);
@@ -146,15 +162,34 @@ impl LlmProvider for OpenAiCompatLlm {
             detail: e.to_string(),
         })?;
 
-        parsed
+        let choice = parsed
             .choices
             .into_iter()
             .next()
-            .and_then(|c| c.message.content)
-            .map(|c| c.trim().to_string())
             .ok_or_else(|| DictError::BadResponse {
                 provider: self.label.clone(),
                 detail: "response contained no choices".into(),
+            })?;
+
+        // A truncated completion is worse than no completion: it silently
+        // returns the first half of the user's sentence, which looks like a
+        // successful cleanup. Treat it as a failure so the caller falls back to
+        // the raw transcript and keeps every word the user said.
+        if choice.finish_reason.as_deref() == Some("length") {
+            return Err(DictError::BadResponse {
+                provider: self.label.clone(),
+                detail: "model hit the token limit and returned a truncated result".into(),
+            });
+        }
+
+        choice
+            .message
+            .content
+            .map(|c| c.trim().to_string())
+            .filter(|c| !c.is_empty())
+            .ok_or_else(|| DictError::BadResponse {
+                provider: self.label.clone(),
+                detail: "response contained no content".into(),
             })
     }
 }

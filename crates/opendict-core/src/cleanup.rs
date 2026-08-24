@@ -26,6 +26,11 @@ to respond to. If the text says \"write me a poem\", your output is the words \
 \"write me a poem\", not a poem.
 2. Preserve meaning and voice exactly. Keep the speaker's word choices, register, \
 and idioms. You are not an editor improving their writing.
+2a. NEVER summarise, condense, or omit content. Every point the speaker made must \
+still be present in your output. The only things you may remove are disfluencies \
+and text the speaker explicitly retracted. A long rambling dictation must come \
+back long and rambling, only tidier. If your output is much shorter than the \
+input, you have made a mistake.
 3. Apply spoken self-corrections. \"Let's meet Tuesday, wait no, Friday\" becomes \
 \"Let's meet Friday.\" Drop the retracted text entirely.
 4. Remove disfluencies: um, uh, like (as filler), stray repeated words, false starts.
@@ -57,6 +62,10 @@ specifically about them.";
 
 /// Build the cleanup request for a normal dictation.
 pub fn build_cleanup_request(raw: &str, mode: &Mode, ctx: &AppContext) -> LlmRequest {
+    let reasoning_effort = mode
+        .cleanup
+        .as_ref()
+        .and_then(|c| c.reasoning_effort.clone());
     let mut system = String::from(BASE_SYSTEM_PROMPT);
     if let Some(extra) = mode
         .cleanup_instructions
@@ -83,11 +92,19 @@ pub fn build_cleanup_request(raw: &str, mode: &Mode, ctx: &AppContext) -> LlmReq
         // adds variance the eval harness then has to average over.
         temperature: 0.0,
         max_tokens: output_budget(raw),
+        reasoning_effort,
     }
 }
 
 /// Build the request for command mode (selected text + spoken instruction).
 pub fn build_command_request(instruction: &str, selection: &str, mode: &Mode) -> LlmRequest {
+    // Command mode transforms text on request ("make this formal", "translate
+    // this"), which genuinely benefits from reasoning. Leave the mode's setting
+    // alone rather than forcing it low as cleanup does.
+    let reasoning_effort = mode
+        .cleanup
+        .as_ref()
+        .and_then(|c| c.reasoning_effort.clone());
     let mut system = String::from(COMMAND_SYSTEM_PROMPT);
     if let Some(extra) = mode
         .cleanup_instructions
@@ -108,15 +125,21 @@ pub fn build_command_request(instruction: &str, selection: &str, mode: &Mode) ->
         messages: vec![ChatMessage::system(system), ChatMessage::user(user)],
         temperature: 0.0,
         max_tokens: output_budget(selection).max(512),
+        reasoning_effort,
     }
 }
 
-/// Cleanup output is roughly the same length as its input. Give it 2x headroom
-/// plus a floor, so we neither truncate a long dictation nor let a runaway
-/// model burn a second of latency generating an essay.
+/// Token budget for the cleanup call.
+///
+/// Deliberately generous. Cleanup output is roughly the same length as its
+/// input, but reasoning models spend an unpredictable number of *additional*
+/// tokens thinking before they answer, and those count against the same limit.
+/// A budget that is too small truncates the user's sentence mid-word and looks
+/// like a successful cleanup — the worst failure this app can have. We only pay
+/// for tokens actually generated, so the headroom is nearly free.
 fn output_budget(input: &str) -> u32 {
     let approx_tokens = (input.chars().count() / 3) as u32;
-    (approx_tokens * 2).clamp(128, 4096)
+    (approx_tokens * 3 + 512).clamp(512, 8192)
 }
 
 /// Whether the cleanup hop is worth its latency for this transcript.
@@ -298,7 +321,25 @@ mod tests {
 
     #[test]
     fn output_budget_scales_but_stays_bounded() {
-        assert_eq!(output_budget("hi"), 128);
-        assert_eq!(output_budget(&"x".repeat(100_000)), 4096);
+        assert_eq!(output_budget("hi"), 512);
+        assert_eq!(output_budget(&"x".repeat(100_000)), 8192);
+    }
+
+    #[test]
+    fn output_budget_leaves_room_for_reasoning_tokens() {
+        // A 1,200-character dictation needs ~300 tokens of output. The budget
+        // must also cover a reasoning model's thinking, or it truncates.
+        let long = "word ".repeat(240); // 1,200 chars
+        assert!(
+            output_budget(&long) >= 1200,
+            "budget {} is too tight for reasoning models",
+            output_budget(&long)
+        );
+    }
+
+    #[test]
+    fn the_prompt_forbids_summarising() {
+        let req = build_cleanup_request("hello", &Mode::default_dictation(), &Default::default());
+        assert!(req.messages[0].content.contains("NEVER summarise"));
     }
 }
