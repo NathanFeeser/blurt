@@ -25,6 +25,11 @@ pub struct Timings {
 
 #[derive(Debug, Clone, uniffi::Record)]
 pub struct DictationResult {
+    /// Which mode produced this. Reported by the core rather than inferred by
+    /// the shell: a UI that recomputes app-matching itself can disagree with
+    /// what actually ran, which is worse than showing nothing.
+    pub mode_id: String,
+    pub mode_name: String,
     /// Straight from the ASR, before any LLM touched it. Kept because the eval
     /// harness scores the two stages separately, and because "show me what I
     /// actually said" is a feature.
@@ -99,6 +104,8 @@ pub async fn run_dictation(
     // Whisper failure mode.
     if raw_text.trim().is_empty() {
         return Ok(DictationResult {
+            mode_id: mode.id.clone(),
+            mode_name: mode.name.clone(),
             raw_text,
             final_text: String::new(),
             cleanup_ran: false,
@@ -121,6 +128,8 @@ pub async fn run_dictation(
         (cleaned.text, cleaned.ran, cleaned.error, cleaned.elapsed_ms);
 
     Ok(DictationResult {
+        mode_id: mode.id.clone(),
+        mode_name: mode.name.clone(),
         raw_text,
         final_text,
         cleanup_ran,
@@ -249,6 +258,8 @@ pub async fn run_command(
     let cleanup_ms = t.elapsed().as_millis() as u64;
 
     Ok(DictationResult {
+        mode_id: mode.id.clone(),
+        mode_name: mode.name.clone(),
         raw_text: transcript.text,
         final_text: sanitize_llm_output(&out, &selection),
         cleanup_ran: true,
@@ -507,6 +518,8 @@ mod tests {
     #[test]
     fn rtf_is_zero_for_empty_audio() {
         let r = DictationResult {
+            mode_id: "t".into(),
+            mode_name: "T".into(),
             raw_text: String::new(),
             final_text: String::new(),
             cleanup_ran: false,

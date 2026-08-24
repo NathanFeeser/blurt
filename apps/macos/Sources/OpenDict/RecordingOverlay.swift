@@ -8,6 +8,13 @@ import AppKit
 /// crash. This is the cheapest fix for both.
 @MainActor
 final class RecordingOverlay {
+    /// The mode that will handle this dictation, shown under the status line.
+    /// Without it the only way to know which mode ran was to open the menu after
+    /// the fact, which is both awkward and too late to be useful.
+    var modeName: String? {
+        didSet { subtitle.stringValue = modeName ?? "" }
+    }
+
     enum State {
         case recording
         /// Key released, still listening. Needs its own wording: without it,
@@ -20,6 +27,7 @@ final class RecordingOverlay {
 
     private var panel: NSPanel?
     private let label = NSTextField(labelWithString: "")
+    private let subtitle = NSTextField(labelWithString: "")
     private let meter = LevelView()
 
     func show(_ state: State) {
@@ -73,7 +81,7 @@ final class RecordingOverlay {
 
     private func makePanel() -> NSPanel {
         let panel = NSPanel(
-            contentRect: NSRect(x: 0, y: 0, width: 220, height: 44),
+            contentRect: NSRect(x: 0, y: 0, width: 240, height: 58),
             // .nonactivatingPanel is the load-bearing flag: without it, showing
             // the overlay pulls focus and the paste lands in the wrong app.
             styleMask: [.borderless, .nonactivatingPanel],
@@ -97,13 +105,19 @@ final class RecordingOverlay {
         background.layer?.masksToBounds = true
 
         label.font = .systemFont(ofSize: 13, weight: .medium)
-        label.frame = NSRect(x: 14, y: 23, width: 192, height: 16)
+        label.frame = NSRect(x: 14, y: 34, width: 212, height: 16)
         label.autoresizingMask = [.width]
 
-        meter.frame = NSRect(x: 14, y: 12, width: 192, height: 6)
+        subtitle.font = .systemFont(ofSize: 11, weight: .regular)
+        subtitle.textColor = .secondaryLabelColor
+        subtitle.frame = NSRect(x: 14, y: 19, width: 212, height: 14)
+        subtitle.autoresizingMask = [.width]
+
+        meter.frame = NSRect(x: 14, y: 10, width: 212, height: 6)
         meter.autoresizingMask = [.width]
 
         background.addSubview(label)
+        background.addSubview(subtitle)
         background.addSubview(meter)
         panel.contentView = background
         return panel

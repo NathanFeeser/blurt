@@ -100,13 +100,20 @@ final class AppModel: ObservableObject {
         modes = starterModes()
     }
 
-    /// Which mode would run right now, given the frontmost app. Shown in the UI
-    /// so per-app matching is visible rather than mysterious.
-    func modeForFrontmostApp() -> Mode? {
-        guard let bundle = NSWorkspace.shared.frontmostApplication?.bundleIdentifier?.lowercased()
-        else { return nil }
-        return modes.first { mode in
-            mode.appMatches.contains { !$0.isEmpty && bundle.contains($0.lowercased()) }
+    /// Which mode would run for the given app, answered by the core so the UI
+    /// cannot disagree with what actually runs.
+    func resolvedMode(bundleId: String?) -> Mode {
+        engine.resolveModeFor(
+            ctx: AppContext(
+                bundleId: bundleId, appName: nil, windowTitle: nil,
+                surroundingText: nil, selectedText: nil))
+    }
+
+    /// True when a mode claimed this app rather than the fallback being used.
+    func modeMatchedApp(_ bundleId: String?) -> Bool {
+        guard let bundleId = bundleId?.lowercased() else { return false }
+        return modes.contains { mode in
+            mode.appMatches.contains { !$0.isEmpty && bundleId.contains($0.lowercased()) }
         }
     }
 }

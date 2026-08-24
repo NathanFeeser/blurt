@@ -142,6 +142,22 @@ impl DictationEngine {
         pipeline::run_command(&samples, &stages, &mode, &ctx, &vocab).await
     }
 
+    /// Which mode would run for this context right now.
+    ///
+    /// Exists so the UI can name the active mode without reimplementing
+    /// `resolve_mode` — two implementations of app matching will disagree
+    /// eventually, and the one the user sees would be the wrong one.
+    pub fn resolve_mode_for(&self, ctx: AppContext) -> Mode {
+        let inner = self.inner.lock().unwrap();
+        let active = inner
+            .modes
+            .iter()
+            .find(|m| m.id == inner.active_mode_id)
+            .cloned()
+            .unwrap_or_else(Mode::default_dictation);
+        resolve_mode(&inner.modes, &active, ctx.bundle_id.as_deref()).clone()
+    }
+
     /// Run only the cleanup stage against text that is already transcribed.
     ///
     /// Exists for the eval harness: scoring cleanup without audio removes STT
@@ -151,6 +167,8 @@ impl DictationEngine {
         let (mode, stages, _) = self.prepare(&ctx)?;
         let cleaned = pipeline::clean_up(&text, &stages, &mode, &ctx).await;
         Ok(DictationResult {
+            mode_id: mode.id.clone(),
+            mode_name: mode.name.clone(),
             raw_text: text,
             final_text: cleaned.text,
             cleanup_ran: cleaned.ran,

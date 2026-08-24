@@ -20,6 +20,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     /// was selected at the moment they pressed the key.
     private var pendingSelection: String?
 
+    /// The last app that was frontmost other than OpenDict itself.
+    ///
+    /// `NSWorkspace.frontmostApplication` can report OpenDict once its own menu
+    /// or settings window takes focus, which would make the menu claim the
+    /// fallback mode was active no matter which app the user was really in.
+    private var lastForegroundBundleId: String?
+    private var lastForegroundAppName: String?
+
     /// Ten minutes of 16 kHz mono is ~38 MB — generous for a long hands-free
     /// dictation, and a hard stop against one left running by accident.
     private static let maxRecordingSeconds: TimeInterval = 600
@@ -39,8 +47,21 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
         NSWorkspace.shared.notificationCenter.addObserver(
             forName: NSWorkspace.didActivateApplicationNotification, object: nil, queue: .main
-        ) { [weak self] _ in
-            MainActor.assumeIsolated { self?.refreshMenu() }
+        ) { [weak self] note in
+            // Pull the strings out here: Notification is not Sendable, so it
+            // cannot cross into the main-actor closure below, and these two
+            // values are all we need anyway.
+            let app = note.userInfo?[NSWorkspace.applicationUserInfoKey] as? NSRunningApplication
+            let bundleId = app?.bundleIdentifier
+            let name = app?.localizedName
+            MainActor.assumeIsolated {
+                guard let self else { return }
+                if let bundleId, bundleId != Bundle.main.bundleIdentifier {
+                    self.lastForegroundBundleId = bundleId
+                    self.lastForegroundAppName = name
+                }
+                self.refreshMenu()
+            }
         }
         buildStatusItem()
         applySettingsToEngine()
@@ -136,6 +157,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             overlay.flashError(error.localizedDescription)
             return
         }
+        overlay.modeName = "Command mode"
         overlay.show(.recording)
         armHandsFreeCap()
 
@@ -209,6 +231,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             overlay.flashError(error.localizedDescription)
             return
         }
+        let bundleId = lastForegroundBundleId
+        let mode = model.resolvedMode(bundleId: bundleId)
+        overlay.modeName =
+            model.modeMatchedApp(bundleId)
+            ? "\(mode.name) · \(lastForegroundAppName ?? "this app")"
+            : "\(mode.name) · fallback"
         overlay.show(.recording)
         armHandsFreeCap()
     }
@@ -309,7 +337,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             preferAccessibility: Settings.preferAccessibilityInsert
         )
         Diag.log(
-            "inserted via \(method.rawValue): "
+            "mode \(result.modeName) (\(result.modeId)) | "
+                + "inserted via \(method.rawValue): "
                 + "raw \(result.rawText.count) -> final \(result.finalText.count) chars, "
                 + "audio \(result.audioDurationMs)ms, total \(result.timings.totalMs)ms "
                 + "(stt \(result.timings.sttMs)ms, cleanup \(result.timings.cleanupMs)ms)")
@@ -392,14 +421,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // Which mode will actually run, and why. Per-app matching is invisible
         // otherwise, and a mode silently not applying is hard to debug.
         menu.addItem(.separator())
-        let matched = model.modeForFrontmostApp()
-        let effective = matched ?? model.modes.first { $0.id == model.activeModeId }
+        let bundleId = lastForegroundBundleId
+        let effective = model.resolvedMode(bundleId: bundleId)
         let reason =
-            matched != nil
-            ? "matches \(NSWorkspace.shared.frontmostApplication?.localizedName ?? "this app")"
+            model.modeMatchedApp(bundleId)
+            ? "matches \(lastForegroundAppName ?? "this app")"
             : "fallback"
         let modeLine = NSMenuItem(
-            title: "Mode: \(effective?.name ?? "—")  (\(reason))", action: nil, keyEquivalent: "")
+            title: "Mode: \(effective.name)  (\(reason))", action: nil, keyEquivalent: "")
         modeLine.isEnabled = false
         menu.addItem(modeLine)
 
@@ -425,8 +454,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             item.target = self
             menu.addItem(item)
             let timing = NSMenuItem(
-                title: "  \(last.timings.totalMs) ms · \(last.sttModel)", action: nil,
-                keyEquivalent: "")
+                title: "  \(last.modeName) · \(last.timings.totalMs) ms · \(last.sttModel)",
+                action: nil, keyEquivalent: "")
             timing.isEnabled = false
             menu.addItem(timing)
         }
