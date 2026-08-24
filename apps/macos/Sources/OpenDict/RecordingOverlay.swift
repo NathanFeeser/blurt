@@ -13,6 +13,7 @@ final class RecordingOverlay {
         /// Key released, still listening. Needs its own wording: without it,
         /// "Listening…" with no key held is indistinguishable from a stuck app.
         case handsFree
+        case command(selectionChars: Int)
         case transcribing
         case error(String)
     }
@@ -32,6 +33,10 @@ final class RecordingOverlay {
             meter.isHidden = false
         case .handsFree:
             label.stringValue = "Hands-free — tap to finish"
+            label.textColor = .labelColor
+            meter.isHidden = false
+        case .command(let chars):
+            label.stringValue = "Editing \(chars) chars — say what to do"
             label.textColor = .labelColor
             meter.isHidden = false
         case .transcribing:

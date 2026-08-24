@@ -357,6 +357,46 @@ fn strip_reasoning(s: &str) -> Option<String> {
 mod tests {
     use super::*;
 
+    #[tokio::test]
+    async fn command_mode_rejects_an_empty_selection() {
+        let stages = Stages {
+            stt: std::sync::Arc::new(NeverCalledStt),
+            cleanup: None,
+        };
+        let err = run_command(
+            &[0.1; 16000],
+            &stages,
+            &Mode::default_dictation(),
+            &AppContext::default(),
+            &Vocabulary::default(),
+        )
+        .await
+        .unwrap_err();
+        assert!(
+            matches!(err, DictError::NotConfigured { .. }),
+            "an empty selection must fail before any provider call: {err:?}"
+        );
+    }
+
+    /// Panics if reached: these tests assert we bail out before any network use.
+    struct NeverCalledStt;
+
+    #[async_trait::async_trait]
+    impl crate::providers::SttProvider for NeverCalledStt {
+        fn name(&self) -> &str {
+            "never"
+        }
+        fn model(&self) -> &str {
+            "never"
+        }
+        async fn transcribe(
+            &self,
+            _req: crate::providers::SttRequest,
+        ) -> Result<crate::providers::Transcript> {
+            panic!("provider must not be called");
+        }
+    }
+
     #[test]
     fn short_utterances_may_shrink_a_lot() {
         // A real self-correction, correctly cleaned down to a third.

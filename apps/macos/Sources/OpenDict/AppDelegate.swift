@@ -6,12 +6,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private let engine = DictationEngine()
     private let audio = AudioEngine()
     private let hotkey = HotkeyMonitor()
+    private let commandHotkey = HotkeyMonitor()
     private let overlay = RecordingOverlay()
 
     private var statusItem: NSStatusItem!
     private var lastResult: DictationResult?
     private var isBusy = false
     private var handsFreeCap: DispatchWorkItem?
+    /// The selection captured when command mode started. Held because the user
+    /// may click elsewhere while speaking, and the instruction applies to what
+    /// was selected at the moment they pressed the key.
+    private var pendingSelection: String?
 
     /// Ten minutes of 16 kHz mono is ~38 MB — generous for a long hands-free
     /// dictation, and a hard stop against one left running by accident.
@@ -28,6 +33,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     func applicationWillTerminate(_ notification: Notification) {
+        commandHotkey.stop()
         hotkey.stop()
         audio.shutdown()
     }
@@ -72,6 +78,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         try? engine.setActiveMode(modeId: "default")
         engine.setVocabulary(vocabulary: Vocabulary(terms: Settings.vocabularyTerms))
         hotkey.key = Settings.hotkey
+        commandHotkey.key = Settings.commandHotkey
     }
 
     private func wireHotkey() {
@@ -89,7 +96,98 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 self?.overlay.flashError("Audio device changed")
             }
         }
+        commandHotkey.onStart = { [weak self] in self?.beginCommand() }
+        commandHotkey.onEnd = { [weak self] in self?.endCommand() }
+        commandHotkey.onHandsFreeEngaged = { [weak self] in self?.engageHandsFree() }
+        commandHotkey.onDiscard = { [weak self] in self?.discardDictation() }
+        commandHotkey.onCancel = { [weak self] in self?.cancelDictation() }
+
         hotkey.start()
+        commandHotkey.start()
+    }
+
+    // MARK: - Command mode
+
+    /// Select text, hold the command key, say what to do with it.
+    ///
+    /// The selection is read at press time rather than on release: it takes up
+    /// to 400 ms via the clipboard fallback, and doing it while the user is
+    /// still speaking hides that latency completely.
+    private func beginCommand() {
+        guard !isBusy else { return }
+        guard Settings.cleanupEnabled else {
+            commandHotkey.reset()
+            overlay.flashError("Command mode needs \"Clean up with AI\" on")
+            return
+        }
+
+        do {
+            try audio.beginRecording()
+        } catch {
+            Diag.log("could not start recording: \(error)")
+            commandHotkey.reset()
+            overlay.flashError(error.localizedDescription)
+            return
+        }
+        overlay.show(.recording)
+        armHandsFreeCap()
+
+        Task { [overlay] in
+            let selection = await Task.detached { SelectionReader.read() }.value
+            await MainActor.run {
+                guard self.commandHotkey.isRecording else { return }
+                guard !selection.text.isEmpty else {
+                    Diag.log("command mode: no selection found")
+                    self.commandHotkey.reset()
+                    self.audio.cancelRecording()
+                    self.handsFreeCap?.cancel()
+                    overlay.flashError("Select some text first")
+                    return
+                }
+                Diag.log(
+                    "command mode: \(selection.text.count) chars via \(selection.source.rawValue)")
+                self.pendingSelection = selection.text
+                overlay.show(.command(selectionChars: selection.text.count))
+            }
+        }
+    }
+
+    private func endCommand() {
+        handsFreeCap?.cancel()
+        let samples = audio.endRecording()
+        guard let selection = pendingSelection else {
+            overlay.hide()
+            return
+        }
+        pendingSelection = nil
+
+        guard samples.count > Int(sampleRate()) / 3 else {
+            overlay.hide()
+            return
+        }
+
+        overlay.show(.transcribing)
+        isBusy = true
+
+        Task { [engine, overlay] in
+            let ctx = AppContext(
+                bundleId: NSWorkspace.shared.frontmostApplication?.bundleIdentifier,
+                appName: NSWorkspace.shared.frontmostApplication?.localizedName,
+                windowTitle: nil,
+                surroundingText: nil,
+                selectedText: selection
+            )
+            do {
+                let result = try await engine.runCommand(samples: samples, ctx: ctx)
+                await MainActor.run { self.finish(result) }
+            } catch {
+                await MainActor.run {
+                    self.isBusy = false
+                    Diag.log("command failed: \(error)")
+                    overlay.flashError(Self.describe(error))
+                }
+            }
+        }
     }
 
     // MARK: - Dictation flow
@@ -124,6 +222,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private func cancelDictation() {
         audio.cancelRecording()
         handsFreeCap?.cancel()
+        pendingSelection = nil
         overlay.hide()
     }
 
@@ -132,10 +231,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private func armHandsFreeCap() {
         handsFreeCap?.cancel()
         let work = DispatchWorkItem { [weak self] in
-            guard let self, self.hotkey.isRecording else { return }
+            guard let self else { return }
+            let commandActive = self.commandHotkey.isRecording
+            guard self.hotkey.isRecording || commandActive else { return }
             Diag.log("hit the \(Int(Self.maxRecordingSeconds))s recording cap; finishing")
-            self.hotkey.reset()
-            self.endDictation()
+            if commandActive {
+                self.commandHotkey.reset()
+                self.endCommand()
+            } else {
+                self.hotkey.reset()
+                self.endDictation()
+            }
         }
         handsFreeCap = work
         DispatchQueue.main.asyncAfter(
@@ -255,6 +361,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             for line in [
                 "Hold \(key) to dictate",
                 "Double-tap for hands-free, tap to finish",
+                "Select text + hold \(Settings.commandHotkey.displayName) to edit it",
                 "Escape while recording cancels",
             ] {
                 let item = NSMenuItem(title: line, action: nil, keyEquivalent: "")
@@ -335,6 +442,22 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         hotkeyItem.submenu = hotkeyMenu
         menu.addItem(hotkeyItem)
 
+        let commandMenu = NSMenu()
+        for key in HotkeyMonitor.Key.allCases {
+            let item = NSMenuItem(
+                title: key.displayName, action: #selector(changeCommandHotkey(_:)),
+                keyEquivalent: "")
+            item.target = self
+            item.representedObject = key.rawValue
+            item.state = key == Settings.commandHotkey ? .on : .off
+            // One physical key cannot drive two gestures.
+            item.isEnabled = key != Settings.hotkey
+            commandMenu.addItem(item)
+        }
+        let commandItem = NSMenuItem(title: "Command Key", action: nil, keyEquivalent: "")
+        commandItem.submenu = commandMenu
+        menu.addItem(commandItem)
+
         menu.addItem(.separator())
         add(menu, "Quit OpenDict", #selector(NSApplication.terminate(_:)), target: NSApp)
 
@@ -366,6 +489,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         refreshMenu()
     }
 
+    @objc private func changeCommandHotkey(_ sender: NSMenuItem) {
+        guard let raw = sender.representedObject as? String,
+            let key = HotkeyMonitor.Key(rawValue: raw), key != Settings.hotkey
+        else { return }
+        Settings.commandHotkey = key
+        commandHotkey.key = key
+        refreshMenu()
+    }
+
     @objc private func changeReasoningEffort(_ sender: NSMenuItem) {
         guard let value = sender.representedObject as? String else { return }
         // Empty means omit the parameter entirely: plenty of OpenAI-compatible
@@ -382,6 +514,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         else { return }
         Settings.hotkey = key
         hotkey.key = key
+        // Settings.commandHotkey re-resolves itself away from a collision, so
+        // read it back rather than assuming it is unchanged.
+        commandHotkey.key = Settings.commandHotkey
         refreshMenu()
     }
 

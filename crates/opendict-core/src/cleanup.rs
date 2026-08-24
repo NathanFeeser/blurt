@@ -320,6 +320,46 @@ mod tests {
     }
 
     #[test]
+    fn command_request_separates_the_selection_from_the_instruction() {
+        let req = build_command_request(
+            "make this more formal",
+            "hey can you take a look at this",
+            &Mode::default_dictation(),
+        );
+        let user = &req.messages[1].content;
+        assert!(user.contains("<selected_text>"));
+        assert!(user.contains("<instruction>"));
+        // The instruction must not be buried inside the selection block, or the
+        // model transforms the wrong text.
+        assert!(
+            user.find("<selected_text>") < user.find("<instruction>"),
+            "selection must come first"
+        );
+        assert!(req.messages[0].content.contains("transform selected text"));
+    }
+
+    #[test]
+    fn command_mode_does_not_inherit_the_dictation_rules() {
+        // Command mode legitimately rewrites, translates, and reformats. Loading
+        // it with "never add information" would defeat the entire feature.
+        let req = build_command_request(
+            "translate to Japanese",
+            "good morning",
+            &Mode::default_dictation(),
+        );
+        assert!(!req.messages[0].content.contains("Never add information"));
+    }
+
+    #[test]
+    fn command_budget_has_a_floor_for_short_selections() {
+        let req = build_command_request("expand this", "ok", &Mode::default_dictation());
+        assert!(
+            req.max_tokens >= 512,
+            "a short selection can expand a great deal"
+        );
+    }
+
+    #[test]
     fn output_budget_scales_but_stays_bounded() {
         assert_eq!(output_budget("hi"), 512);
         assert_eq!(output_budget(&"x".repeat(100_000)), 8192);
