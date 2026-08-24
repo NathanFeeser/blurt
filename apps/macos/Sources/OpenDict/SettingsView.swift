@@ -235,6 +235,14 @@ struct ModesTab: View {
         )
     }
 
+    /// Run an add action and select whatever it appended, so a new mode opens
+    /// in the editor instead of leaving the user looking at the previous one.
+    private func addAndSelect(_ add: () -> Void) -> String? {
+        let before = Set(model.modes.map(\.id))
+        add()
+        return model.modes.first { !before.contains($0.id) }?.id ?? selection
+    }
+
     /// Move the selection off a mode before removing it, so the editor unmounts
     /// rather than re-rendering against something that no longer exists.
     private func deleteMode(_ mode: Mode) {
@@ -279,7 +287,18 @@ struct ModesTab: View {
                 }
                 Divider()
                 HStack(spacing: 4) {
-                    Button { model.addMode() } label: { Image(systemName: "plus") }
+                    Menu {
+                        Button("New Mode") { selection = addAndSelect(model.addMode) }
+                        Button("Private (on-device, no cleanup)") {
+                            selection = addAndSelect(model.addPrivateMode)
+                        }
+                        .disabled(model.modes.contains { $0.id == "private" })
+                    } label: {
+                        Image(systemName: "plus")
+                    }
+                    .menuStyle(.borderlessButton)
+                    .menuIndicator(.hidden)
+                    .fixedSize()
                     Button {
                         if let m = current { model.duplicate(m) }
                     } label: { Image(systemName: "doc.on.doc") }
