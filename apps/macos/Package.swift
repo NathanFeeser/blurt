@@ -26,13 +26,26 @@ let package = Package(
             // edit, so it builds in Swift 5 mode; our own target stays on 6.
             swiftSettings: [.swiftLanguageMode(.v5)]
         ),
-        .executableTarget(
-            name: "OpenDict",
+        // All the logic lives in a library so it can be tested. The executable
+        // is only an entry point: an executable target's top-level code cannot
+        // be linked into a test bundle.
+        .target(
+            name: "OpenDictKit",
             dependencies: [
                 "OpenDictCore",
                 .product(name: "WhisperKit", package: "argmax-oss-swift"),
             ],
+            path: "Sources/OpenDictKit"
+        ),
+        .executableTarget(
+            name: "OpenDict",
+            dependencies: ["OpenDictKit"],
             path: "Sources/OpenDict"
+        ),
+        .testTarget(
+            name: "OpenDictKitTests",
+            dependencies: ["OpenDictKit"],
+            path: "Tests/OpenDictKitTests"
         ),
     ]
 )

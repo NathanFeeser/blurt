@@ -3,9 +3,10 @@ import OpenDictCore
 
 /// Non-secret preferences. Keys never appear here — those live in the Keychain.
 enum Settings {
-    // Computed, not stored: a stored global of a non-Sendable type is a Swift 6
-    // concurrency error, and `.standard` is already a cheap cached lookup.
-    private static var d: UserDefaults { .standard }
+    /// Swappable so tests run against an isolated suite instead of writing to
+    /// the user's real preferences.
+    nonisolated(unsafe) static var defaults: UserDefaults = .standard
+    private static var d: UserDefaults { defaults }
 
     enum Key {
         static let hotkey = "hotkey"

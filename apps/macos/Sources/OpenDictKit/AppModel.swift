@@ -269,7 +269,7 @@ enum ModeStore {
     private static let key = "modesJSON"
 
     static func load() -> [Mode] {
-        guard let json = UserDefaults.standard.string(forKey: key), !json.isEmpty else {
+        guard let json = Settings.defaults.string(forKey: key), !json.isEmpty else {
             return starterModes()
         }
         do {
@@ -283,7 +283,7 @@ enum ModeStore {
     }
 
     static func save(_ modes: [Mode]) {
-        UserDefaults.standard.set(modesToJson(modes: modes), forKey: key)
+        Settings.defaults.set(modesToJson(modes: modes), forKey: key)
     }
 
     static func exportJSON(_ modes: [Mode]) -> String {

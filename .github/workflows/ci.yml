@@ -36,6 +36,8 @@ jobs:
         run: ./scripts/build-xcframework.sh
       - name: Run Swift smoke test
         run: ./scripts/swift-smoke.sh
+      - name: Run macOS app tests
+        run: swift test --package-path apps/macos
       - uses: actions/upload-artifact@v4
         with:
           name: OpenDictCore.xcframework

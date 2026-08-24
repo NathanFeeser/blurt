@@ -44,6 +44,11 @@ cp build/Sources/opendict_core.swift "$APPDIR/Sources/OpenDictCore/"
 echo "==> swift build ($CONFIG)"
 swift build --package-path "$APPDIR" -c "$CONFIG"
 
+if [[ "${OPENDICT_SKIP_TESTS:-}" != "1" ]]; then
+  echo "==> swift test"
+  swift test --package-path "$APPDIR" 2>&1 | tail -3
+fi
+
 BIN="$ROOT/$APPDIR/.build/$CONFIG/OpenDict"
 [[ -x "$BIN" ]] || { echo "build produced no executable at $BIN" >&2; exit 1; }
 

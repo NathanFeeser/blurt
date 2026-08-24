@@ -2,7 +2,7 @@ import AppKit
 import OpenDictCore
 
 @MainActor
-final class AppDelegate: NSObject, NSApplicationDelegate {
+public final class AppDelegate: NSObject, NSApplicationDelegate {
     private let engine = DictationEngine()
     private lazy var model = AppModel(engine: engine)
     private lazy var settingsWindow = SettingsWindow(model: model)
@@ -32,7 +32,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     /// dictation, and a hard stop against one left running by accident.
     private static let maxRecordingSeconds: TimeInterval = 600
 
-    func applicationDidFinishLaunching(_ notification: Notification) {
+    public override init() { super.init() }
+
+    public func applicationDidFinishLaunching(_ notification: Notification) {
         Diag.log("applicationDidFinishLaunching")
         Settings.registerDefaults()
         NotificationCenter.default.addObserver(
@@ -70,7 +72,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         Task { await startUp() }
     }
 
-    func applicationWillTerminate(_ notification: Notification) {
+    public func applicationWillTerminate(_ notification: Notification) {
         commandHotkey.stop()
         hotkey.stop()
         audio.shutdown()

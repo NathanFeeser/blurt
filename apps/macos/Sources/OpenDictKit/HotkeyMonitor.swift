@@ -65,27 +65,14 @@ final class HotkeyMonitor {
     var onDiscard: (() -> Void)?
     var onCancel: (() -> Void)?
 
-    /// Below this, a press is a tap rather than a hold. Generous enough to
-    /// survive a deliberate but quick press, short enough that a real dictation
-    /// never trips it.
-    private let holdThreshold: TimeInterval = 0.25
-    /// Maximum gap between the two taps of a double-tap.
-    private let doubleTapWindow: TimeInterval = 0.4
-
-    private enum State {
-        case idle
-        case holding
-        case handsFree
-    }
-
-    private var state: State = .idle
-    private var pressedAt: TimeInterval = 0
-    private var lastTapAt: TimeInterval = 0
+    /// The gesture state machine. Lives in `GestureRecognizer` so the
+    /// thresholds can be tested without synthesising NSEvents.
+    private var recognizer = GestureRecognizer()
 
     private var globalMonitor: Any?
     private var localMonitor: Any?
 
-    var isRecording: Bool { state != .idle }
+    var isRecording: Bool { recognizer.isRecording }
 
     func start() {
         stop()
@@ -107,22 +94,23 @@ final class HotkeyMonitor {
         if let localMonitor { NSEvent.removeMonitor(localMonitor) }
         globalMonitor = nil
         localMonitor = nil
-        state = .idle
+        recognizer.reset()
     }
 
     /// Abort from outside the monitor (menu, error path).
     func reset() {
-        state = .idle
-        lastTapAt = 0
+        recognizer.reset()
     }
 
     private func handle(_ event: NSEvent) {
+        // Uptime rather than wall-clock: it cannot jump backwards across a
+        // clock change mid-gesture.
+        let now = ProcessInfo.processInfo.systemUptime
+
         if event.type == .keyDown {
             // 53 = Escape.
-            if event.keyCode == 53, state != .idle {
-                state = .idle
-                lastTapAt = 0
-                onCancel?()
+            if event.keyCode == 53 {
+                emit(recognizer.escape())
             }
             return
         }
@@ -132,47 +120,21 @@ final class HotkeyMonitor {
         // `flagsChanged` reports the state after the change, and keyCode tells us
         // which physical key caused it. Both are needed: the flag alone cannot
         // distinguish left Option from right.
-        let isDown = event.modifierFlags.contains(key.flag)
-        let now = ProcessInfo.processInfo.systemUptime
-
-        if isDown {
-            pressedAt = now
-            // In hands-free the key is only being tapped to finish; the press
-            // itself must not restart anything.
-            if state == .idle {
-                state = .holding
-                onStart?()
-            }
-            return
+        if event.modifierFlags.contains(key.flag) {
+            emit(recognizer.keyDown(at: now))
+        } else {
+            emit(recognizer.keyUp(at: now))
         }
+    }
 
-        switch state {
-        case .idle:
-            break
-
-        case .handsFree:
-            state = .idle
-            lastTapAt = 0
-            onEnd?()
-
-        case .holding:
-            let heldFor = now - pressedAt
-            if heldFor >= holdThreshold {
-                state = .idle
-                lastTapAt = 0
-                onEnd?()
-            } else if now - lastTapAt < doubleTapWindow {
-                // Second quick tap: keep the recording running, hands free.
-                state = .handsFree
-                lastTapAt = 0
-                onHandsFreeEngaged?()
-            } else {
-                // A single quick tap. Discard it and remember the time, so the
-                // next tap can complete a double-tap.
-                state = .idle
-                lastTapAt = now
-                onDiscard?()
-            }
+    private func emit(_ event: GestureRecognizer.Event?) {
+        switch event {
+        case .start: onStart?()
+        case .end: onEnd?()
+        case .handsFreeEngaged: onHandsFreeEngaged?()
+        case .discard: onDiscard?()
+        case .cancel: onCancel?()
+        case nil: break
         }
     }
 }
