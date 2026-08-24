@@ -14,8 +14,8 @@ use crate::error::{DictError, Result};
 use crate::mode::{resolve_mode, Mode};
 use crate::pipeline::{self, DictationResult, Stages};
 use crate::providers::{
-    default_base_url, DeepgramStt, LlmProvider, OpenAiCompatLlm, OpenAiCompatStt,
-    ProviderCredentials, SttKind, SttProvider,
+    default_base_url, DeepgramStt, LlmProvider, LocalStt, LocalTranscriber, OpenAiCompatLlm,
+    OpenAiCompatStt, ProviderCredentials, SttKind, SttProvider,
 };
 use crate::vocab::Vocabulary;
 
@@ -47,6 +47,8 @@ struct EngineState {
     modes: Vec<Mode>,
     active_mode_id: String,
     vocabulary: Vocabulary,
+    /// Supplied by the shell when on-device transcription is available.
+    local: Option<Arc<dyn LocalTranscriber>>,
 }
 
 #[uniffi::export(async_runtime = "tokio")]
@@ -75,6 +77,7 @@ impl DictationEngine {
                 active_mode_id: default.id.clone(),
                 modes: vec![default, Mode::raw()],
                 vocabulary: Vocabulary::default(),
+                local: None,
             }),
             http,
         }
@@ -113,6 +116,19 @@ impl DictationEngine {
         }
         inner.active_mode_id = mode_id;
         Ok(())
+    }
+
+    /// Register the shell's on-device transcriber, or clear it with `None`.
+    ///
+    /// Modes referring to the `local` provider fail with a clear error until
+    /// this is set, rather than silently falling back to a hosted provider —
+    /// a mode chosen for privacy must never quietly send audio to a server.
+    pub fn set_local_transcriber(&self, transcriber: Option<Arc<dyn LocalTranscriber>>) {
+        self.inner.lock().unwrap().local = transcriber;
+    }
+
+    pub fn has_local_transcriber(&self) -> bool {
+        self.inner.lock().unwrap().local.is_some()
     }
 
     pub fn set_vocabulary(&self, vocabulary: Vocabulary) {
@@ -178,7 +194,6 @@ impl DictationEngine {
             stt_provider: "none".into(),
             stt_model: "none".into(),
             timings: crate::pipeline::Timings {
-                encode_ms: 0,
                 stt_ms: 0,
                 cleanup_ms: cleaned.elapsed_ms,
                 total_ms: cleaned.elapsed_ms,
@@ -222,9 +237,10 @@ impl DictationEngine {
         let mode = resolve_mode(&inner.modes, &active, ctx.bundle_id.as_deref()).clone();
         let vocab = inner.vocabulary.clone();
         let credentials = inner.credentials.clone();
+        let local = inner.local.clone();
         drop(inner);
 
-        let stt = build_stt(&self.http, &credentials, &mode)?;
+        let stt = build_stt(&self.http, &credentials, local, &mode)?;
         let cleanup = match &mode.cleanup {
             Some(cfg) => Some(build_llm(
                 &self.http,
@@ -274,11 +290,24 @@ fn lookup_credentials(
 fn build_stt(
     http: &reqwest::Client,
     credentials: &HashMap<String, ProviderCredentials>,
+    local: Option<Arc<dyn LocalTranscriber>>,
     mode: &Mode,
 ) -> Result<Arc<dyn SttProvider>> {
     let id = &mode.stt.provider_id;
+
+    // On-device needs no credentials, and asking for them first would reject a
+    // perfectly valid offline configuration.
+    if SttKind::from_id(id)? == SttKind::Local {
+        let transcriber = local.ok_or(DictError::NotConfigured {
+            provider: "on-device".into(),
+            detail: "no on-device model is installed".into(),
+        })?;
+        return Ok(Arc::new(LocalStt::new(transcriber)));
+    }
+
     let creds = lookup_credentials(credentials, id)?;
     Ok(match SttKind::from_id(id)? {
+        SttKind::Local => unreachable!("handled above"),
         SttKind::OpenAiCompat => Arc::new(OpenAiCompatStt::new(
             http.clone(),
             creds,
@@ -311,6 +340,59 @@ fn build_llm(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn on_device_without_an_installed_model_is_a_clear_error() {
+        let err = build_stt(
+            &reqwest::Client::new(),
+            &HashMap::new(),
+            None,
+            &Mode {
+                stt: crate::mode::SttConfig {
+                    provider_id: "local".into(),
+                    model: "large-v3-turbo".into(),
+                    language: None,
+                },
+                ..Mode::default_dictation()
+            },
+        );
+        match err {
+            Err(DictError::NotConfigured { provider, .. }) => assert_eq!(provider, "on-device"),
+            Err(other) => panic!("expected NotConfigured, got {other:?}"),
+            Ok(_) => panic!("expected an error when no model is installed"),
+        }
+    }
+
+    #[test]
+    fn on_device_never_falls_back_to_a_hosted_provider() {
+        // A mode chosen for privacy must fail loudly rather than quietly send
+        // the user's audio to a server.
+        let mut credentials = HashMap::new();
+        credentials.insert(
+            "groq".to_string(),
+            ProviderCredentials {
+                base_url: "https://x".into(),
+                api_key: Some("k".into()),
+            },
+        );
+        let result = build_stt(
+            &reqwest::Client::new(),
+            &credentials,
+            None,
+            &Mode {
+                stt: crate::mode::SttConfig {
+                    provider_id: "whisperkit".into(),
+                    model: "large-v3-turbo".into(),
+                    language: None,
+                },
+                ..Mode::default_dictation()
+            },
+        );
+        assert!(
+            result.is_err(),
+            "must not silently use a configured hosted provider"
+        );
+    }
 
     #[test]
     fn local_providers_work_with_no_configuration() {

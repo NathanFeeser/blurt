@@ -10,6 +10,8 @@ struct SettingsView: View {
                 .tabItem { Label("Modes", systemImage: "square.stack.3d.up") }
             ProvidersTab(model: model)
                 .tabItem { Label("Providers", systemImage: "key") }
+            OnDeviceTab(model: model)
+                .tabItem { Label("On-Device", systemImage: "cpu") }
             VocabularyTab(model: model)
                 .tabItem { Label("Vocabulary", systemImage: "text.book.closed") }
             GesturesTab()
@@ -362,6 +364,99 @@ struct ProviderRow: View {
             } catch {
                 status = AppDelegate.describe(error)
             }
+        }
+    }
+}
+
+// MARK: - On-device
+
+struct OnDeviceTab: View {
+    @ObservedObject var model: AppModel
+    @State private var variant = Settings.localModelVariant
+        ?? WhisperKitTranscriber.suggestedVariants[0]
+
+    var body: some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 16) {
+                Text("Transcribe entirely on this Mac")
+                    .font(.headline)
+                Text(
+                    "WhisperKit runs Whisper on the Neural Engine. No API key, no network, "
+                        + "no per-word cost, and your audio never leaves the device. Models are "
+                        + "large, so nothing is downloaded until you choose one."
+                )
+                .font(.callout).foregroundStyle(.secondary)
+
+                Picker("Model", selection: $variant) {
+                    ForEach(WhisperKitTranscriber.suggestedVariants, id: \.self) { v in
+                        Text(WhisperKitTranscriber.displayName(v)).tag(v)
+                    }
+                }
+
+                HStack(spacing: 10) {
+                    Button(model.localModelVariant == nil ? "Download and Enable" : "Switch Model")
+                    {
+                        model.enableLocalModel(variant: variant)
+                    }
+                    .disabled(isBusy)
+
+                    if model.localModelVariant != nil {
+                        Button("Turn Off") { model.disableLocalModel() }
+                    }
+                    statusView
+                }
+
+                Divider()
+
+                VStack(alignment: .leading, spacing: 8) {
+                    Text("Using it").font(.headline)
+                    Text(
+                        "Set a mode's transcription provider to \"local\". The Private preset "
+                            + "does that and turns off the cleanup model too, so nothing at all "
+                            + "leaves the machine."
+                    )
+                    .font(.callout).foregroundStyle(.secondary)
+                    Button("Add Private Mode") { model.addPrivateMode() }
+                        .disabled(model.modes.contains { $0.id == "private" })
+                    Text(
+                        "On-device modes never silently fall back to a hosted provider. If the "
+                            + "model is not loaded they report an error instead, because a mode "
+                            + "chosen for privacy must not quietly send audio to a server."
+                    )
+                    .font(.caption).foregroundStyle(.secondary)
+                }
+                Spacer()
+            }
+            .padding(20)
+        }
+    }
+
+    private var isBusy: Bool {
+        switch model.localState {
+        case .loading, .downloading: return true
+        default: return false
+        }
+    }
+
+    @ViewBuilder private var statusView: some View {
+        switch model.localState {
+        case .idle:
+            Text("off").font(.caption).foregroundStyle(.secondary)
+        case .downloading(let progress):
+            HStack(spacing: 6) {
+                ProgressView().controlSize(.small)
+                Text("downloading \(Int(progress * 100))%").font(.caption)
+            }
+        case .loading:
+            HStack(spacing: 6) {
+                ProgressView().controlSize(.small)
+                Text("downloading and loading — this takes a while the first time")
+                    .font(.caption)
+            }
+        case .ready(let name):
+            Text("ready · \(name)").font(.caption).foregroundStyle(.green)
+        case .failed(let message):
+            Text(message).font(.caption).foregroundStyle(.red).lineLimit(2)
         }
     }
 }

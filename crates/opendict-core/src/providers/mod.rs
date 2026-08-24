@@ -5,9 +5,11 @@
 //! or Ollama on localhost — so nothing above this module may assume a vendor.
 
 pub mod llm;
+pub mod local;
 pub mod stt;
 
 pub use llm::{ChatMessage, LlmProvider, LlmRequest, OpenAiCompatLlm, Role};
+pub use local::{LocalStt, LocalTranscriber};
 pub use stt::{DeepgramStt, OpenAiCompatStt, SttProvider, SttRequest, Transcript};
 
 use crate::error::{DictError, Result};
@@ -29,13 +31,21 @@ pub struct ProviderCredentials {
 pub enum SttKind {
     OpenAiCompat,
     Deepgram,
+    /// Runs on this machine, through a transcriber the shell provides.
+    Local,
 }
 
 impl SttKind {
     pub fn from_id(id: &str) -> Result<Self> {
         match id {
-            "openai-compat" | "groq" | "openai" | "local" => Ok(SttKind::OpenAiCompat),
+            // Self-hosted servers speak the OpenAI wire format, so they are the
+            // same adapter as the hosted ones. `local` is deliberately NOT here:
+            // it means on-device inference, not a server on localhost.
+            "openai-compat" | "groq" | "openai" | "ollama" | "lmstudio" | "vllm" => {
+                Ok(SttKind::OpenAiCompat)
+            }
             "deepgram" => Ok(SttKind::Deepgram),
+            "local" | "whisperkit" | "on-device" => Ok(SttKind::Local),
             other => Err(DictError::UnknownProvider {
                 id: other.to_string(),
             }),
@@ -82,5 +92,40 @@ pub(crate) async fn classify_http_error(provider: &str, resp: reqwest::Response)
             // Provider error bodies can be enormous HTML pages behind a proxy.
             body: body.chars().take(500).collect(),
         },
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn every_advertised_provider_id_resolves() {
+        // The settings UI and `opendict providers` list these; each must map to
+        // an adapter or the user gets "unknown provider" from a documented id.
+        for id in [
+            "groq",
+            "openai",
+            "deepgram",
+            "ollama",
+            "lmstudio",
+            "vllm",
+            "openai-compat",
+        ] {
+            assert!(SttKind::from_id(id).is_ok(), "{id} should resolve");
+        }
+    }
+
+    #[test]
+    fn local_means_on_device_not_a_localhost_server() {
+        assert_eq!(SttKind::from_id("local").unwrap(), SttKind::Local);
+        assert_eq!(SttKind::from_id("whisperkit").unwrap(), SttKind::Local);
+        // A server on localhost is reached by its own id, not by "local".
+        assert_eq!(SttKind::from_id("ollama").unwrap(), SttKind::OpenAiCompat);
+    }
+
+    #[test]
+    fn unknown_ids_are_rejected() {
+        assert!(SttKind::from_id("not-a-provider").is_err());
     }
 }

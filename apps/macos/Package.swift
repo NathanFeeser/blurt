@@ -7,6 +7,11 @@ import PackageDescription
 let package = Package(
     name: "OpenDict",
     platforms: [.macOS(.v13)],
+    dependencies: [
+        // WhisperKit runs Whisper on the Neural Engine via CoreML. Pinned to a
+        // minor version: it is the piece most likely to move underneath us.
+        .package(url: "https://github.com/argmaxinc/argmax-oss-swift.git", from: "1.1.0")
+    ],
     targets: [
         .binaryTarget(
             name: "opendict_coreFFI",
@@ -15,11 +20,18 @@ let package = Package(
         .target(
             name: "OpenDictCore",
             dependencies: ["opendict_coreFFI"],
-            path: "Sources/OpenDictCore"
+            path: "Sources/OpenDictCore",
+            // UniFFI's generated async-callback plumbing does not satisfy Swift
+            // 6 strict concurrency. This is machine-generated code we do not
+            // edit, so it builds in Swift 5 mode; our own target stays on 6.
+            swiftSettings: [.swiftLanguageMode(.v5)]
         ),
         .executableTarget(
             name: "OpenDict",
-            dependencies: ["OpenDictCore"],
+            dependencies: [
+                "OpenDictCore",
+                .product(name: "WhisperKit", package: "argmax-oss-swift"),
+            ],
             path: "Sources/OpenDict"
         ),
     ]

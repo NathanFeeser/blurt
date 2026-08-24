@@ -4,13 +4,19 @@ use serde::Deserialize;
 use super::{classify_http_error, ProviderCredentials};
 use crate::error::{from_reqwest, DictError, Result};
 
-/// One transcription request. `biasing_prompt` is the lever for custom
-/// vocabulary — note that Whisper only consumes the last 224 tokens of it and
-/// weights the tail most heavily, so callers must put rare terms last.
-/// See `crate::vocab::biasing_prompt`.
+/// One transcription request.
+///
+/// Carries raw samples rather than an encoded file: each provider knows its own
+/// wire format, and the on-device path wants floats directly. Encoding here
+/// would mean encoding a WAV only for WhisperKit to decode it again.
+///
+/// `biasing_prompt` is the lever for custom vocabulary — note that Whisper only
+/// consumes the last 224 tokens of it and weights the tail most heavily, so
+/// callers must put rare terms last. See `crate::vocab::biasing_prompt`.
 #[derive(Debug, Clone)]
 pub struct SttRequest {
-    pub wav: Vec<u8>,
+    pub samples: Vec<f32>,
+    pub sample_rate: u32,
     /// BCP-47 tag. `None` means let the provider auto-detect.
     pub language: Option<String>,
     pub biasing_prompt: Option<String>,
@@ -86,7 +92,8 @@ impl SttProvider for OpenAiCompatStt {
             self.creds.base_url.trim_end_matches('/')
         );
 
-        let part = reqwest::multipart::Part::bytes(req.wav)
+        let wav = crate::audio::encode_wav_pcm16(&req.samples, req.sample_rate);
+        let part = reqwest::multipart::Part::bytes(wav)
             .file_name("audio.wav")
             .mime_str("audio/wav")
             .map_err(|e| from_reqwest(&self.label, e))?;
@@ -218,7 +225,10 @@ impl SttProvider for DeepgramStt {
             .post(&url)
             .header("Authorization", format!("Token {key}"))
             .header("Content-Type", "audio/wav")
-            .body(req.wav)
+            .body(crate::audio::encode_wav_pcm16(
+                &req.samples,
+                req.sample_rate,
+            ))
             .send()
             .await
             .map_err(|e| from_reqwest("deepgram", e))?;

@@ -177,6 +177,25 @@ impl Mode {
         ]
     }
 
+    /// Fully offline: on-device transcription, no cleanup model, nothing leaves
+    /// the machine. Offered as a preset because "private" should be one click,
+    /// not a form the user has to assemble correctly.
+    pub fn private() -> Self {
+        Self {
+            id: "private".into(),
+            name: "Private (on-device)".into(),
+            stt: SttConfig {
+                provider_id: "local".into(),
+                model: "large-v3-turbo".into(),
+                language: None,
+            },
+            cleanup: None,
+            cleanup_instructions: None,
+            app_matches: vec![],
+            allow_cleanup_skip: true,
+        }
+    }
+
     /// Does this mode claim the given app?
     pub fn matches_app(&self, bundle_id: Option<&str>) -> bool {
         let Some(id) = bundle_id else { return false };
@@ -233,6 +252,16 @@ mod tests {
             resolve_mode(&modes, &active, Some("com.microsoft.VSCode")).id,
             "code"
         );
+    }
+
+    #[test]
+    fn the_private_mode_sends_nothing_anywhere() {
+        let m = Mode::private();
+        assert!(
+            m.cleanup.is_none(),
+            "a cleanup model would send the transcript off-device"
+        );
+        assert_eq!(m.stt.provider_id, "local");
     }
 
     #[test]
@@ -316,6 +345,12 @@ mod tests {
 #[uniffi::export]
 pub fn starter_modes() -> Vec<Mode> {
     Mode::starter_set()
+}
+
+/// The offline preset, for the settings UI.
+#[uniffi::export]
+pub fn private_mode() -> Mode {
+    Mode::private()
 }
 
 /// A blank mode for the "add mode" button.

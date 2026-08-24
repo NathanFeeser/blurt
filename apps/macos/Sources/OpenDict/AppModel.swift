@@ -30,12 +30,55 @@ final class AppModel: ObservableObject {
     /// Bumped whenever a key changes, so views showing key state refresh.
     @Published private(set) var credentialsRevision = 0
 
+    @Published private(set) var localState: WhisperKitTranscriber.State = .idle
+    private var localTranscriber: WhisperKitTranscriber?
+
     init(engine: DictationEngine) {
         self.engine = engine
         self.modes = ModeStore.load()
         self.vocabulary = Settings.vocabularyTerms
         self.activeModeId = Settings.activeModeId
         apply()
+
+        // Restore the on-device model if one was chosen. Loading is async and
+        // non-blocking; until it finishes, on-device modes report that the model
+        // is still loading rather than hanging.
+        if let variant = Settings.localModelVariant {
+            enableLocalModel(variant: variant)
+        }
+    }
+
+    // MARK: - On-device transcription
+
+    func enableLocalModel(variant: String) {
+        Settings.localModelVariant = variant
+
+        let transcriber = localTranscriber ?? WhisperKitTranscriber(variant: variant)
+        transcriber.onStateChange = { [weak self] state in
+            self?.localState = state
+        }
+        localTranscriber = transcriber
+        localState = transcriber.state
+
+        engine.setLocalTranscriber(transcriber: transcriber)
+        transcriber.prepare(variant: variant)
+    }
+
+    func disableLocalModel() {
+        Settings.localModelVariant = nil
+        localTranscriber?.unload()
+        localTranscriber = nil
+        localState = .idle
+        engine.setLocalTranscriber(transcriber: nil)
+    }
+
+    var localModelVariant: String? { Settings.localModelVariant }
+
+    /// Add the fully offline preset, unless it is already there.
+    func addPrivateMode() {
+        let preset = privateMode()
+        guard !modes.contains(where: { $0.id == preset.id }) else { return }
+        modes.append(preset)
     }
 
     /// Push the whole configuration into the engine. Cheap, and doing it

@@ -369,8 +369,7 @@ async fn main() -> Result<()> {
                         "stt_provider": result.stt_provider,
                         "stt_model": result.stt_model,
                         "timings": {
-                            "encode_ms": result.timings.encode_ms,
-                            "stt_ms": result.timings.stt_ms,
+                                "stt_ms": result.timings.stt_ms,
                             "cleanup_ms": result.timings.cleanup_ms,
                             "total_ms": result.timings.total_ms,
                         },

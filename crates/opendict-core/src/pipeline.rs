@@ -6,7 +6,7 @@
 
 use std::sync::Arc;
 
-use crate::audio::{encode_wav_pcm16, SAMPLE_RATE};
+use crate::audio::SAMPLE_RATE;
 use crate::cleanup::{build_cleanup_request, build_command_request, needs_cleanup};
 use crate::context::AppContext;
 use crate::error::{DictError, Result};
@@ -17,7 +17,7 @@ use crate::vocab::Vocabulary;
 /// Where the wall-clock went. All values in milliseconds.
 #[derive(Debug, Clone, Default, uniffi::Record)]
 pub struct Timings {
-    pub encode_ms: u64,
+    /// Time inside the transcription provider, including any encoding it does.
     pub stt_ms: u64,
     pub cleanup_ms: u64,
     pub total_ms: u64,
@@ -84,14 +84,11 @@ pub async fn run_dictation(
     }
     let audio_duration_ms = (samples.len() as u64 * 1000) / SAMPLE_RATE as u64;
 
-    let encode_start = std::time::Instant::now();
-    let wav = encode_wav_pcm16(samples, SAMPLE_RATE);
-    let encode_ms = encode_start.elapsed().as_millis() as u64;
-
     let transcript: Transcript = stages
         .stt
         .transcribe(SttRequest {
-            wav,
+            samples: samples.to_vec(),
+            sample_rate: SAMPLE_RATE,
             language: mode.stt.language.clone(),
             biasing_prompt: vocab.biasing_prompt(),
         })
@@ -115,7 +112,6 @@ pub async fn run_dictation(
             stt_provider: transcript.provider,
             stt_model: transcript.model,
             timings: Timings {
-                encode_ms,
                 stt_ms: transcript.latency_ms,
                 cleanup_ms: 0,
                 total_ms: started.elapsed().as_millis() as u64,
@@ -139,7 +135,6 @@ pub async fn run_dictation(
         stt_provider: transcript.provider,
         stt_model: transcript.model,
         timings: Timings {
-            encode_ms,
             stt_ms: transcript.latency_ms,
             cleanup_ms,
             total_ms: started.elapsed().as_millis() as u64,
@@ -234,14 +229,11 @@ pub async fn run_command(
     }
     let audio_duration_ms = (samples.len() as u64 * 1000) / SAMPLE_RATE as u64;
 
-    let encode_start = std::time::Instant::now();
-    let wav = encode_wav_pcm16(samples, SAMPLE_RATE);
-    let encode_ms = encode_start.elapsed().as_millis() as u64;
-
     let transcript = stages
         .stt
         .transcribe(SttRequest {
-            wav,
+            samples: samples.to_vec(),
+            sample_rate: SAMPLE_RATE,
             language: mode.stt.language.clone(),
             biasing_prompt: vocab.biasing_prompt(),
         })
@@ -269,7 +261,6 @@ pub async fn run_command(
         stt_provider: transcript.provider,
         stt_model: transcript.model,
         timings: Timings {
-            encode_ms,
             stt_ms: transcript.latency_ms,
             cleanup_ms,
             total_ms: started.elapsed().as_millis() as u64,

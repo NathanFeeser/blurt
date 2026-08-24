@@ -19,6 +19,7 @@ enum Settings {
         static let preferAccessibilityInsert = "preferAccessibilityInsert"
         static let readScreenContext = "readScreenContext"
         static let vocabulary = "vocabulary"
+        static let localModelVariant = "localModelVariant"
         static let activeModeId = "activeModeId"
         static let baseUrlPrefix = "baseUrl."
     }
@@ -116,6 +117,17 @@ enum Settings {
                 .filter { !$0.isEmpty }
         }
         set { d.set(newValue.joined(separator: ", "), forKey: Key.vocabulary) }
+    }
+
+    /// The on-device model variant, or nil when on-device is switched off.
+    /// Models are hundreds of megabytes, so nothing is downloaded until the user
+    /// explicitly picks one.
+    static var localModelVariant: String? {
+        get {
+            let v = d.string(forKey: Key.localModelVariant) ?? ""
+            return v.isEmpty ? nil : v
+        }
+        set { d.set(newValue ?? "", forKey: Key.localModelVariant) }
     }
 
     /// Which mode is used when no mode claims the frontmost app.
