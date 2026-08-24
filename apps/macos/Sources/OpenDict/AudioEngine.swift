@@ -1,17 +1,20 @@
 @preconcurrency import AVFoundation
 import OpenDictCore
 
-/// Microphone capture, resampled to what the core expects and pushed into its
-/// ring buffer.
+/// Microphone capture, resampled to what the core expects and pushed into the
+/// core's ring buffer.
 ///
-/// The engine runs continuously rather than starting on the hotkey, for two
-/// reasons: `AVAudioEngine.start()` costs 100-300 ms, which would clip the first
-/// word worse than having no pre-roll at all; and a continuously fed ring buffer
-/// is the only way the core's pre-roll window can contain anything.
+/// The engine is started on the hotkey and stopped the moment recording ends, so
+/// macOS's orange microphone indicator is lit only while you are actually
+/// dictating. An always-running engine would let the core's pre-roll window
+/// catch words spoken a beat before the key registers, but it also means the app
+/// permanently *looks* like it is listening, which is a worse trade for a tool
+/// that lives in the menu bar all day.
 ///
-/// The cost is that macOS shows the orange microphone indicator whenever the app
-/// is running. That is a real tradeoff, not an oversight — "Pause Microphone" in
-/// the menu stops the engine for users who would rather have the indicator off.
+/// To keep the start cheap, the graph is configured exactly once and only
+/// `start()`/`stop()` are called per dictation — a full teardown and rebuild
+/// each time would cost far more. Measured start latency is written to the diag
+/// log so this stays honest.
 final class AudioEngine {
     /// Owned by the Rust side; the shell only feeds it.
     let capture = AudioCapture()
@@ -20,11 +23,14 @@ final class AudioEngine {
     private var converter: AVAudioConverter?
     private var targetFormat: AVAudioFormat?
     private var isRunning = false
+    private var isConfigured = false
 
     /// Most recent RMS level, for the overlay meter.
     private(set) var level: Float = 0
 
     var onLevel: ((Float) -> Void)?
+    /// A recording was abandoned because the audio device changed underneath it.
+    var onInterrupted: (() -> Void)?
 
     init() {
         NotificationCenter.default.addObserver(
@@ -35,8 +41,10 @@ final class AudioEngine {
         )
     }
 
-    func start() throws {
-        guard !isRunning else { return }
+    /// Build the graph. Idempotent, and separated from `start()` so the
+    /// per-dictation path does as little work as possible.
+    private func configure() throws {
+        guard !isConfigured else { return }
 
         let input = engine.inputNode
         let inputFormat = input.outputFormat(forBus: 0)
@@ -67,25 +75,60 @@ final class AudioEngine {
         }
 
         engine.prepare()
-        try engine.start()
-        isRunning = true
+        isConfigured = true
     }
 
-    func stop() {
+    /// Warm the graph without opening the microphone. Called at launch so the
+    /// first dictation of a session is not the slow one.
+    func prewarm() {
+        try? configure()
+    }
+
+    var running: Bool { isRunning }
+
+    // MARK: - Recording control
+
+    /// Opens the microphone and begins buffering. The orange indicator lights
+    /// here and goes out in `endRecording()`/`cancelRecording()`.
+    func beginRecording() throws {
+        try configure()
+        if !isRunning {
+            let t0 = ProcessInfo.processInfo.systemUptime
+            try engine.start()
+            isRunning = true
+            let ms = Int((ProcessInfo.processInfo.systemUptime - t0) * 1000)
+            Diag.log("audio engine started in \(ms)ms")
+        }
+        capture.start()
+    }
+
+    func cancelRecording() {
+        capture.cancel()
+        stopEngine()
+    }
+
+    func endRecording() -> [Float] {
+        let samples = capture.stop()
+        stopEngine()
+        return samples
+    }
+
+    /// Releases the microphone. The graph stays configured for the next press.
+    private func stopEngine() {
         guard isRunning else { return }
-        engine.inputNode.removeTap(onBus: 0)
         engine.stop()
         isRunning = false
         level = 0
     }
 
-    var running: Bool { isRunning }
-
-    // MARK: - Recording control (delegates to the core's ring buffer)
-
-    func beginRecording() { capture.start() }
-    func cancelRecording() { capture.cancel() }
-    func endRecording() -> [Float] { capture.stop() }
+    /// Full teardown, for app exit.
+    func shutdown() {
+        stopEngine()
+        if isConfigured {
+            engine.inputNode.removeTap(onBus: 0)
+            isConfigured = false
+        }
+    }
 
     // MARK: - Private
 
@@ -129,12 +172,22 @@ final class AudioEngine {
     /// machine wakes. The tap and converter are bound to the old format, so both
     /// have to be rebuilt or capture silently produces nothing.
     @objc private func configurationChanged() {
-        guard isRunning else { return }
-        stop()
-        do {
-            try start()
-        } catch {
-            NSLog("OpenDict: could not restart audio after a device change: \(error)")
+        // The tap and converter are bound to the old format, so both must be
+        // rebuilt. Doing it lazily means a device change between dictations
+        // costs nothing until the next press.
+        let wasRecording = isRunning
+        stopEngine()
+        engine.inputNode.removeTap(onBus: 0)
+        isConfigured = false
+        converter = nil
+        targetFormat = nil
+        Diag.log("audio device changed; graph will rebuild on next use")
+
+        if wasRecording {
+            // A device change mid-dictation loses the tail of the audio; there
+            // is no good recovery, so drop it rather than transcribe a fragment.
+            capture.cancel()
+            onInterrupted?()
         }
     }
 }

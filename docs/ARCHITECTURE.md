@@ -124,6 +124,33 @@ should remove nearly all of it rather than merely some of it, which is what make
 move (1) above worth its cost. The skip-gate path already sits inside budget
 today, which is the other half of the argument for move (2).
 
+### In-app measurements (2026-08-24, real dictation on Groq's free tier)
+
+13 dictations through the macOS app, hold-to-talk and hands-free:
+
+| | |
+|---|---|
+| Audio engine start (on-demand mic) | 78–105 ms, mean ~90 ms |
+| Short dictation, skip gate fired | 320–538 ms total |
+| Longer dictation, cleanup ran | 2.0–2.9 s total |
+
+Two corrections to the estimates above:
+
+**Opening the microphone on the hotkey costs ~90 ms, not the 100–300 ms assumed.**
+That is cheap enough that the always-listening design was not worth its cost —
+see the note in `AudioEngine.swift`. The core's pre-roll ring is consequently
+inert on macOS today.
+
+**STT latency does scale with audio length, contrary to the batch measurements
+above** — those used 2–5 s clips where fixed overhead dominates. A 29 s
+hands-free recording took 1177 ms of STT. But the variance is large enough
+(a 7 s clip took 1979 ms in the same session) that free-tier scheduling, not
+audio length, is the dominant term. Do not tune against these numbers without a
+paid tier.
+
+Short dictations already sit inside the p50 budget. The cleanup path does not,
+and that gap is what Phase 1 streaming is for.
+
 Re-measure after Phase 1 streaming lands. If p50 is not under 600 ms then, the
 budget is wrong or the design is.
 

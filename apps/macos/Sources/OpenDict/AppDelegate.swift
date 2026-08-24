@@ -11,6 +11,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var statusItem: NSStatusItem!
     private var lastResult: DictationResult?
     private var isBusy = false
+    private var handsFreeCap: DispatchWorkItem?
+
+    /// Ten minutes of 16 kHz mono is ~38 MB — generous for a long hands-free
+    /// dictation, and a hard stop against one left running by accident.
+    private static let maxRecordingSeconds: TimeInterval = 600
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         Diag.log("applicationDidFinishLaunching")
@@ -24,7 +29,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     func applicationWillTerminate(_ notification: Notification) {
         hotkey.stop()
-        audio.stop()
+        audio.shutdown()
     }
 
     // MARK: - Start-up
@@ -47,13 +52,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             Permissions.requestAccessibility()
         }
 
-        do {
-            try audio.start()
-            Diag.log("audio engine started")
-        } catch {
-            Diag.log("audio engine FAILED: \(error)")
-            overlay.flashError(error.localizedDescription)
-        }
+        // Build the audio graph but do not open the microphone: the orange
+        // indicator should light only while actually dictating.
+        audio.prewarm()
+        Diag.log("audio graph prewarmed")
         refreshMenu()
     }
 
@@ -73,11 +75,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     private func wireHotkey() {
-        hotkey.onPress = { [weak self] in self?.beginDictation() }
-        hotkey.onRelease = { [weak self] in self?.endDictation() }
+        hotkey.onStart = { [weak self] in self?.beginDictation() }
+        hotkey.onEnd = { [weak self] in self?.endDictation() }
+        hotkey.onHandsFreeEngaged = { [weak self] in self?.engageHandsFree() }
+        hotkey.onDiscard = { [weak self] in self?.discardDictation() }
         hotkey.onCancel = { [weak self] in self?.cancelDictation() }
         audio.onLevel = { [weak self] level in
             Task { @MainActor in self?.overlay.update(level: level) }
+        }
+        audio.onInterrupted = { [weak self] in
+            Task { @MainActor in
+                self?.hotkey.reset()
+                self?.overlay.flashError("Audio device changed")
+            }
         }
         hotkey.start()
     }
@@ -86,20 +96,54 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     private func beginDictation() {
         guard !isBusy else { return }
-        guard audio.running else {
-            overlay.flashError("Microphone is paused")
+        do {
+            try audio.beginRecording()
+        } catch {
+            Diag.log("could not start recording: \(error)")
+            hotkey.reset()
+            overlay.flashError(error.localizedDescription)
             return
         }
-        audio.beginRecording()
         overlay.show(.recording)
+        armHandsFreeCap()
     }
 
-    private func cancelDictation() {
+    /// The key was double-tapped: keep recording with the key released.
+    private func engageHandsFree() {
+        overlay.show(.handsFree)
+        Diag.log("hands-free engaged")
+    }
+
+    /// A tap too short to be dictation — usually the first half of a double-tap,
+    /// or a stray brush of the key. Drop the audio without a round trip.
+    private func discardDictation() {
         audio.cancelRecording()
         overlay.hide()
     }
 
+    private func cancelDictation() {
+        audio.cancelRecording()
+        handsFreeCap?.cancel()
+        overlay.hide()
+    }
+
+    /// Hands-free has no key held down to bound it, so a forgotten session would
+    /// record until memory ran out. Cap it and finish cleanly.
+    private func armHandsFreeCap() {
+        handsFreeCap?.cancel()
+        let work = DispatchWorkItem { [weak self] in
+            guard let self, self.hotkey.isRecording else { return }
+            Diag.log("hit the \(Int(Self.maxRecordingSeconds))s recording cap; finishing")
+            self.hotkey.reset()
+            self.endDictation()
+        }
+        handsFreeCap = work
+        DispatchQueue.main.asyncAfter(
+            deadline: .now() + Self.maxRecordingSeconds, execute: work)
+    }
+
     private func endDictation() {
+        handsFreeCap?.cancel()
         let samples = audio.endRecording()
         // Guard against a stray tap of the modifier. 300 ms of audio is not a
         // sentence, and sending it wastes a request and risks a hallucination
@@ -188,12 +232,24 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private func refreshMenu() {
         let menu = NSMenu()
 
-        let ready = audio.running && Permissions.accessibilityGranted()
+        let ready =
+            Permissions.microphoneGranted() && Permissions.accessibilityGranted()
             && KeychainStore.get(for: Settings.sttProvider) != nil
-        menu.addItem(
-            withTitle: ready
-                ? "Hold \(Settings.hotkey.displayName) to dictate" : "Setup incomplete",
-            action: nil, keyEquivalent: "")
+
+        if ready {
+            let key = Settings.hotkey.displayName
+            for line in [
+                "Hold \(key) to dictate",
+                "Double-tap for hands-free, tap to finish",
+                "Escape while recording cancels",
+            ] {
+                let item = NSMenuItem(title: line, action: nil, keyEquivalent: "")
+                item.isEnabled = false
+                menu.addItem(item)
+            }
+        } else {
+            menu.addItem(withTitle: "Setup incomplete", action: nil, keyEquivalent: "")
+        }
         menu.addItem(.separator())
 
         if !Permissions.accessibilityGranted() {
@@ -231,11 +287,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         cleanup.state = Settings.cleanupEnabled ? .on : .off
         menu.addItem(cleanup)
 
-        let mic = NSMenuItem(
-            title: audio.running ? "Pause Microphone" : "Resume Microphone",
-            action: #selector(toggleMic), keyEquivalent: "")
-        mic.target = self
-        menu.addItem(mic)
 
         let hotkeyMenu = NSMenu()
         for key in HotkeyMonitor.Key.allCases {
@@ -278,15 +329,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     @objc private func toggleCleanup() {
         Settings.cleanupEnabled.toggle()
         applySettingsToEngine()
-        refreshMenu()
-    }
-
-    @objc private func toggleMic() {
-        if audio.running {
-            audio.stop()
-        } else {
-            try? audio.start()
-        }
         refreshMenu()
     }
 
