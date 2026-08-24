@@ -214,14 +214,32 @@ struct ModesTab: View {
     @ObservedObject var model: AppModel
     @State private var selection: String?
 
+    /// Bind by id, never by array index.
+    ///
+    /// The previous version captured an index. Deleting a mode shrank the array
+    /// while SwiftUI still held the binding, and the next re-render subscripted
+    /// past the end and trapped — so deleting the last mode in the list crashed
+    /// the app every time. Looking up by id cannot go out of range, and the
+    /// captured snapshot means even a getter racing a deletion returns
+    /// something valid instead of crashing.
     private var selected: Binding<Mode>? {
         guard let id = selection ?? model.modes.first?.id,
-            let index = model.modes.firstIndex(where: { $0.id == id })
+            let snapshot = model.modes.first(where: { $0.id == id })
         else { return nil }
         return Binding(
-            get: { model.modes[index] },
-            set: { model.modes[index] = $0 }
+            get: { model.modes.first(where: { $0.id == id }) ?? snapshot },
+            set: { newValue in
+                guard let index = model.modes.firstIndex(where: { $0.id == id }) else { return }
+                model.modes[index] = newValue
+            }
         )
+    }
+
+    /// Move the selection off a mode before removing it, so the editor unmounts
+    /// rather than re-rendering against something that no longer exists.
+    private func deleteMode(_ mode: Mode) {
+        selection = model.modes.first { $0.id != mode.id }?.id
+        model.delete(mode)
     }
 
     var body: some View {
@@ -267,7 +285,7 @@ struct ModesTab: View {
                     } label: { Image(systemName: "doc.on.doc") }
                         .disabled(current == nil)
                     Button {
-                        if let m = current { model.delete(m) }
+                        if let m = current { deleteMode(m) }
                     } label: { Image(systemName: "minus") }
                         .disabled(current == nil || model.modes.count <= 1)
                     Spacer()
@@ -289,7 +307,7 @@ struct ModesTab: View {
 
             Group {
                 if let binding = selected {
-                    ModeEditor(mode: binding, model: model)
+                    ModeEditor(mode: binding, model: model, onDelete: deleteMode)
                 } else {
                     ContentUnavailableFallback()
                 }
@@ -331,6 +349,7 @@ private struct ContentUnavailableFallback: View {
 struct ModeEditor: View {
     @Binding var mode: Mode
     @ObservedObject var model: AppModel
+    var onDelete: (Mode) -> Void
 
     private var appMatchText: Binding<String> {
         Binding(
@@ -474,7 +493,7 @@ struct ModeEditor: View {
                 Divider()
                 HStack {
                     Button(role: .destructive) {
-                        model.delete(mode)
+                        onDelete(mode)
                     } label: {
                         Label("Delete this mode", systemImage: "trash")
                     }
