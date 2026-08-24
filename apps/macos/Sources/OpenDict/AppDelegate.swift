@@ -134,6 +134,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         commandHotkey.start()
     }
 
+    /// Short label for where transcription happens.
+    static func sttLabel(_ mode: Mode) -> String {
+        switch mode.stt.providerId {
+        case "local", "whisperkit", "on-device": return "on-device"
+        default: return mode.stt.providerId
+        }
+    }
+
     // MARK: - Command mode
 
     /// Select text, hold the command key, say what to do with it.
@@ -233,10 +241,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
         let bundleId = lastForegroundBundleId
         let mode = model.resolvedMode(bundleId: bundleId)
-        overlay.modeName =
+        let where_ =
             model.modeMatchedApp(bundleId)
-            ? "\(mode.name) · \(lastForegroundAppName ?? "this app")"
-            : "\(mode.name) · fallback"
+            ? (lastForegroundAppName ?? "this app") : "fallback"
+        // Naming the provider is the whole point: "on-device" is a promise about
+        // where the audio goes, and the user needs to see it kept.
+        overlay.modeName = "\(mode.name) · \(where_) · \(Self.sttLabel(mode))"
         overlay.show(.recording)
         armHandsFreeCap()
     }
@@ -337,7 +347,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             preferAccessibility: Settings.preferAccessibilityInsert
         )
         Diag.log(
-            "mode \(result.modeName) (\(result.modeId)) | "
+            "mode \(result.modeName) (\(result.modeId)) via "
+                + "\(result.sttProvider)/\(result.sttModel) | "
                 + "inserted via \(method.rawValue): "
                 + "raw \(result.rawText.count) -> final \(result.finalText.count) chars, "
                 + "audio \(result.audioDurationMs)ms, total \(result.timings.totalMs)ms "
@@ -454,7 +465,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             item.target = self
             menu.addItem(item)
             let timing = NSMenuItem(
-                title: "  \(last.modeName) · \(last.timings.totalMs) ms · \(last.sttModel)",
+                title: "  \(last.modeName) · \(last.sttProvider) · \(last.timings.totalMs) ms",
                 action: nil, keyEquivalent: "")
             timing.isEnabled = false
             menu.addItem(timing)

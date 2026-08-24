@@ -53,13 +53,21 @@ struct ModesTab: View {
                                         .clipShape(Capsule())
                                 }
                             }
-                            Text(
-                                mode.appMatches.isEmpty
-                                    ? "no app match" : mode.appMatches.joined(separator: ", ")
-                            )
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
-                            .lineLimit(1)
+                            HStack(spacing: 4) {
+                                if ["local", "whisperkit", "on-device"]
+                                    .contains(mode.stt.providerId)
+                                {
+                                    Image(systemName: "cpu")
+                                        .font(.caption2).foregroundStyle(.green)
+                                }
+                                Text(
+                                    mode.appMatches.isEmpty
+                                        ? "no app match" : mode.appMatches.joined(separator: ", ")
+                                )
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                                .lineLimit(1)
+                            }
                         }
                         .tag(mode.id)
                     }
@@ -411,9 +419,24 @@ struct OnDeviceTab: View {
                 VStack(alignment: .leading, spacing: 8) {
                     Text("Using it").font(.headline)
                     Text(
-                        "Set a mode's transcription provider to \"local\". The Private preset "
-                            + "does that and turns off the cleanup model too, so nothing at all "
-                            + "leaves the machine."
+                        "Turning the model on does not change your existing modes. Each mode "
+                            + "keeps its own transcription provider, and a mode that matches the "
+                            + "app you are in wins over the Private preset — which matches no "
+                            + "apps at all."
+                    )
+                    .font(.callout).foregroundStyle(.secondary)
+
+                    HStack {
+                        Button("Use On-Device for All Modes") { model.useLocalForAllModes() }
+                            .disabled(model.localModelVariant == nil || model.allModesAreLocal)
+                        Button("Switch All Back to Groq") { model.useHostedForAllModes() }
+                        Spacer()
+                    }
+
+                    Text(
+                        "Or set a single mode's provider to \"local\" in the Modes tab. The "
+                            + "Private preset does that and turns the cleanup model off too, so "
+                            + "nothing at all leaves the machine."
                     )
                     .font(.callout).foregroundStyle(.secondary)
                     Button("Add Private Mode") { model.addPrivateMode() }

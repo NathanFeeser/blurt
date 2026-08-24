@@ -74,6 +74,38 @@ final class AppModel: ObservableObject {
 
     var localModelVariant: String? { Settings.localModelVariant }
 
+    /// Point every mode's transcription at the on-device model.
+    ///
+    /// Enabling on-device otherwise changes nothing for the apps a user actually
+    /// works in: their per-app modes keep their hosted provider and quietly win
+    /// over the Private preset, which matches no apps at all.
+    func useLocalForAllModes() {
+        modes = modes.map { mode in
+            var m = mode
+            m.stt.providerId = "local"
+            m.stt.model = Settings.localModelVariant ?? m.stt.model
+            return m
+        }
+    }
+
+    /// Point every mode's transcription back at a hosted provider.
+    func useHostedForAllModes(providerId: String = "groq") {
+        modes = modes.map { mode in
+            var m = mode
+            guard ["local", "whisperkit", "on-device"].contains(m.stt.providerId) else {
+                return m
+            }
+            m.stt.providerId = providerId
+            m.stt.model = "whisper-large-v3-turbo"
+            return m
+        }
+    }
+
+    var allModesAreLocal: Bool {
+        !modes.isEmpty
+            && modes.allSatisfy { ["local", "whisperkit", "on-device"].contains($0.stt.providerId) }
+    }
+
     /// Add the fully offline preset, unless it is already there.
     func addPrivateMode() {
         let preset = privateMode()
