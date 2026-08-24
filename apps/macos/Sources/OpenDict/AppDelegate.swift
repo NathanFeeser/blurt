@@ -242,6 +242,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     private func refreshMenu() {
         let menu = NSMenu()
+        // AppKit otherwise recomputes isEnabled from target/action validation,
+        // which overrides the explicit disabling below.
+        menu.autoenablesItems = false
 
         let ready =
             Permissions.microphoneGranted() && Permissions.accessibilityGranted()
@@ -299,6 +302,26 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         menu.addItem(cleanup)
 
 
+        // Only meaningful when the cleanup stage runs at all.
+        let effortMenu = NSMenu()
+        for (title, value) in [
+            ("Low — fastest (default)", "low"),
+            ("Medium", "medium"),
+            ("High — slowest", "high"),
+            ("Don't send (for local servers)", ""),
+        ] {
+            let item = NSMenuItem(
+                title: title, action: #selector(changeReasoningEffort(_:)), keyEquivalent: "")
+            item.target = self
+            item.representedObject = value
+            item.state = (Settings.reasoningEffort ?? "") == value ? .on : .off
+            effortMenu.addItem(item)
+        }
+        let effortItem = NSMenuItem(title: "Cleanup Reasoning", action: nil, keyEquivalent: "")
+        effortItem.submenu = effortMenu
+        effortItem.isEnabled = Settings.cleanupEnabled
+        menu.addItem(effortItem)
+
         let hotkeyMenu = NSMenu()
         for key in HotkeyMonitor.Key.allCases {
             let item = NSMenuItem(
@@ -341,6 +364,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         Settings.cleanupEnabled.toggle()
         applySettingsToEngine()
         refreshMenu()
+    }
+
+    @objc private func changeReasoningEffort(_ sender: NSMenuItem) {
+        guard let value = sender.representedObject as? String else { return }
+        // Empty means omit the parameter entirely: plenty of OpenAI-compatible
+        // servers reject fields they do not recognise.
+        Settings.reasoningEffort = value.isEmpty ? nil : value
+        applySettingsToEngine()
+        refreshMenu()
+        Diag.log("cleanup reasoning effort set to \(value.isEmpty ? "(omitted)" : value)")
     }
 
     @objc private func changeHotkey(_ sender: NSMenuItem) {
