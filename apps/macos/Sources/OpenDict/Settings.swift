@@ -19,6 +19,8 @@ enum Settings {
         static let preferAccessibilityInsert = "preferAccessibilityInsert"
         static let readScreenContext = "readScreenContext"
         static let vocabulary = "vocabulary"
+        static let activeModeId = "activeModeId"
+        static let baseUrlPrefix = "baseUrl."
     }
 
     static func registerDefaults() {
@@ -42,6 +44,7 @@ enum Settings {
             Key.preferAccessibilityInsert: true,
             Key.readScreenContext: true,
             Key.vocabulary: "",
+            Key.activeModeId: "default",
         ])
     }
 
@@ -115,21 +118,19 @@ enum Settings {
         set { d.set(newValue.joined(separator: ", "), forKey: Key.vocabulary) }
     }
 
-    /// The single mode the Phase 0 app uses. Phase 1 replaces this with a real
-    /// mode list and per-app matching.
-    static func currentMode() -> Mode {
-        Mode(
-            id: "default",
-            name: "Dictation",
-            stt: SttConfig(providerId: sttProvider, model: sttModel, language: nil),
-            cleanup: cleanupEnabled
-                ? LlmConfig(
-                    providerId: llmProvider, model: llmModel,
-                    reasoningEffort: reasoningEffort)
-                : nil,
-            cleanupInstructions: nil,
-            appMatches: [],
-            allowCleanupSkip: true
-        )
+    /// Which mode is used when no mode claims the frontmost app.
+    static var activeModeId: String {
+        get { d.string(forKey: Key.activeModeId) ?? "default" }
+        set { d.set(newValue, forKey: Key.activeModeId) }
+    }
+
+    /// Optional custom endpoint per provider. Empty means "use the built-in
+    /// default", which the core fills in.
+    static func baseUrl(for providerId: String) -> String {
+        d.string(forKey: Key.baseUrlPrefix + providerId) ?? ""
+    }
+
+    static func setBaseUrl(_ value: String, for providerId: String) {
+        d.set(value.trimmingCharacters(in: .whitespaces), forKey: Key.baseUrlPrefix + providerId)
     }
 }

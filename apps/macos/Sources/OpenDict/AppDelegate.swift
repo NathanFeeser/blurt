@@ -4,6 +4,8 @@ import OpenDictCore
 @MainActor
 final class AppDelegate: NSObject, NSApplicationDelegate {
     private let engine = DictationEngine()
+    private lazy var model = AppModel(engine: engine)
+    private lazy var settingsWindow = SettingsWindow(model: model)
     private let audio = AudioEngine()
     private let hotkey = HotkeyMonitor()
     private let commandHotkey = HotkeyMonitor()
@@ -25,6 +27,21 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     func applicationDidFinishLaunching(_ notification: Notification) {
         Diag.log("applicationDidFinishLaunching")
         Settings.registerDefaults()
+        NotificationCenter.default.addObserver(
+            forName: .openDictHotkeysChanged, object: nil, queue: .main
+        ) { [weak self] _ in
+            MainActor.assumeIsolated {
+                guard let self else { return }
+                self.hotkey.key = Settings.hotkey
+                self.commandHotkey.key = Settings.commandHotkey
+                self.refreshMenu()
+            }
+        }
+        NSWorkspace.shared.notificationCenter.addObserver(
+            forName: NSWorkspace.didActivateApplicationNotification, object: nil, queue: .main
+        ) { [weak self] _ in
+            MainActor.assumeIsolated { self?.refreshMenu() }
+        }
         buildStatusItem()
         applySettingsToEngine()
         wireHotkey()
@@ -66,17 +83,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     private func applySettingsToEngine() {
-        for provider in KeychainStore.knownProviders {
-            if let key = KeychainStore.get(for: provider) {
-                engine.setCredentials(
-                    providerId: provider,
-                    creds: ProviderCredentials(baseUrl: "", apiKey: key)
-                )
-            }
-        }
-        engine.setModes(modes: [Settings.currentMode()])
-        try? engine.setActiveMode(modeId: "default")
-        engine.setVocabulary(vocabulary: Vocabulary(terms: Settings.vocabularyTerms))
+        model.apply()
         hotkey.key = Settings.hotkey
         commandHotkey.key = Settings.commandHotkey
     }
@@ -115,7 +122,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     /// still speaking hides that latency completely.
     private func beginCommand() {
         guard !isBusy else { return }
-        guard Settings.cleanupEnabled else {
+        guard model.modes.contains(where: { $0.cleanup != nil }) else {
             commandHotkey.reset()
             overlay.flashError("Command mode needs \"Clean up with AI\" on")
             return
@@ -325,7 +332,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         refreshMenu()
     }
 
-    private static func describe(_ error: Error) -> String {
+    static func describe(_ error: Error) -> String {
         guard let dictError = error as? DictError else { return error.localizedDescription }
         switch dictError {
         case .Unauthorized: return "API key rejected"
@@ -352,14 +359,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // which overrides the explicit disabling below.
         menu.autoenablesItems = false
 
+        let sttProvider = model.modes.first?.stt.providerId ?? "groq"
         let ready =
             Permissions.microphoneGranted() && Permissions.accessibilityGranted()
-            && KeychainStore.get(for: Settings.sttProvider) != nil
+            && model.hasKey(for: sttProvider)
 
         if ready {
-            let key = Settings.hotkey.displayName
             for line in [
-                "Hold \(key) to dictate",
+                "Hold \(Settings.hotkey.displayName) to dictate",
                 "Double-tap for hands-free, tap to finish",
                 "Select text + hold \(Settings.commandHotkey.displayName) to edit it",
                 "Escape while recording cancels",
@@ -371,7 +378,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         } else {
             menu.addItem(withTitle: "Setup incomplete", action: nil, keyEquivalent: "")
         }
-        menu.addItem(.separator())
 
         if !Permissions.accessibilityGranted() {
             add(menu, "Grant Accessibility access…", #selector(openAccessibility))
@@ -379,9 +385,36 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         if !Permissions.microphoneGranted() {
             add(menu, "Grant Microphone access…", #selector(openMicrophone))
         }
-        if KeychainStore.get(for: Settings.sttProvider) == nil {
-            add(menu, "Set \(Settings.sttProvider) API key…", #selector(setApiKey))
+        if !model.hasKey(for: sttProvider) {
+            add(menu, "Set up providers…", #selector(openSettings))
         }
+
+        // Which mode will actually run, and why. Per-app matching is invisible
+        // otherwise, and a mode silently not applying is hard to debug.
+        menu.addItem(.separator())
+        let matched = model.modeForFrontmostApp()
+        let effective = matched ?? model.modes.first { $0.id == model.activeModeId }
+        let reason =
+            matched != nil
+            ? "matches \(NSWorkspace.shared.frontmostApplication?.localizedName ?? "this app")"
+            : "fallback"
+        let modeLine = NSMenuItem(
+            title: "Mode: \(effective?.name ?? "—")  (\(reason))", action: nil, keyEquivalent: "")
+        modeLine.isEnabled = false
+        menu.addItem(modeLine)
+
+        let modeMenu = NSMenu()
+        for mode in model.modes {
+            let item = NSMenuItem(
+                title: mode.name, action: #selector(changeFallbackMode(_:)), keyEquivalent: "")
+            item.target = self
+            item.representedObject = mode.id
+            item.state = mode.id == model.activeModeId ? .on : .off
+            modeMenu.addItem(item)
+        }
+        let modeItem = NSMenuItem(title: "Fallback Mode", action: nil, keyEquivalent: "")
+        modeItem.submenu = modeMenu
+        menu.addItem(modeItem)
 
         if let last = lastResult, !last.finalText.isEmpty {
             menu.addItem(.separator())
@@ -399,65 +432,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
 
         menu.addItem(.separator())
-        add(menu, "Set API Key…", #selector(setApiKey))
-        add(menu, "Set Vocabulary…", #selector(setVocabulary))
-
-        let cleanup = NSMenuItem(
-            title: "Clean up with AI", action: #selector(toggleCleanup), keyEquivalent: "")
-        cleanup.target = self
-        cleanup.state = Settings.cleanupEnabled ? .on : .off
-        menu.addItem(cleanup)
-
-
-        // Only meaningful when the cleanup stage runs at all.
-        let effortMenu = NSMenu()
-        for (title, value) in [
-            ("Low — fastest (default)", "low"),
-            ("Medium", "medium"),
-            ("High — slowest", "high"),
-            ("Don't send (for local servers)", ""),
-        ] {
-            let item = NSMenuItem(
-                title: title, action: #selector(changeReasoningEffort(_:)), keyEquivalent: "")
-            item.target = self
-            item.representedObject = value
-            item.state = (Settings.reasoningEffort ?? "") == value ? .on : .off
-            effortMenu.addItem(item)
-        }
-        let effortItem = NSMenuItem(title: "Cleanup Reasoning", action: nil, keyEquivalent: "")
-        effortItem.submenu = effortMenu
-        effortItem.isEnabled = Settings.cleanupEnabled
-        menu.addItem(effortItem)
-
-        let hotkeyMenu = NSMenu()
-        for key in HotkeyMonitor.Key.allCases {
-            let item = NSMenuItem(
-                title: key.displayName, action: #selector(changeHotkey(_:)), keyEquivalent: "")
-            item.target = self
-            item.representedObject = key.rawValue
-            item.state = key == Settings.hotkey ? .on : .off
-            hotkeyMenu.addItem(item)
-        }
-        let hotkeyItem = NSMenuItem(title: "Dictation Key", action: nil, keyEquivalent: "")
-        hotkeyItem.submenu = hotkeyMenu
-        menu.addItem(hotkeyItem)
-
-        let commandMenu = NSMenu()
-        for key in HotkeyMonitor.Key.allCases {
-            let item = NSMenuItem(
-                title: key.displayName, action: #selector(changeCommandHotkey(_:)),
-                keyEquivalent: "")
-            item.target = self
-            item.representedObject = key.rawValue
-            item.state = key == Settings.commandHotkey ? .on : .off
-            // One physical key cannot drive two gestures.
-            item.isEnabled = key != Settings.hotkey
-            commandMenu.addItem(item)
-        }
-        let commandItem = NSMenuItem(title: "Command Key", action: nil, keyEquivalent: "")
-        commandItem.submenu = commandMenu
-        menu.addItem(commandItem)
-
+        add(menu, "Settings…", #selector(openSettings))
+        add(menu, "Open Log", #selector(openLog))
         menu.addItem(.separator())
         add(menu, "Quit OpenDict", #selector(NSApplication.terminate(_:)), target: NSApp)
 
@@ -483,91 +459,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         NSPasteboard.general.setString(text, forType: .string)
     }
 
-    @objc private func toggleCleanup() {
-        Settings.cleanupEnabled.toggle()
-        applySettingsToEngine()
+    @objc private func openSettings() {
+        settingsWindow.show()
+    }
+
+    @objc private func openLog() {
+        NSWorkspace.shared.open(Diag.url)
+    }
+
+    @objc private func changeFallbackMode(_ sender: NSMenuItem) {
+        guard let id = sender.representedObject as? String else { return }
+        model.activeModeId = id
         refreshMenu()
     }
 
-    @objc private func changeCommandHotkey(_ sender: NSMenuItem) {
-        guard let raw = sender.representedObject as? String,
-            let key = HotkeyMonitor.Key(rawValue: raw), key != Settings.hotkey
-        else { return }
-        Settings.commandHotkey = key
-        commandHotkey.key = key
-        refreshMenu()
-    }
-
-    @objc private func changeReasoningEffort(_ sender: NSMenuItem) {
-        guard let value = sender.representedObject as? String else { return }
-        // Empty means omit the parameter entirely: plenty of OpenAI-compatible
-        // servers reject fields they do not recognise.
-        Settings.reasoningEffort = value.isEmpty ? nil : value
-        applySettingsToEngine()
-        refreshMenu()
-        Diag.log("cleanup reasoning effort set to \(value.isEmpty ? "(omitted)" : value)")
-    }
-
-    @objc private func changeHotkey(_ sender: NSMenuItem) {
-        guard let raw = sender.representedObject as? String,
-            let key = HotkeyMonitor.Key(rawValue: raw)
-        else { return }
-        Settings.hotkey = key
-        hotkey.key = key
-        // Settings.commandHotkey re-resolves itself away from a collision, so
-        // read it back rather than assuming it is unchanged.
-        commandHotkey.key = Settings.commandHotkey
-        refreshMenu()
-    }
-
-    @objc private func setApiKey() {
-        let provider = Settings.sttProvider
-        guard
-            let value = prompt(
-                title: "\(provider) API key",
-                message: "Stored in your login keychain. It is sent only to \(provider).",
-                initial: KeychainStore.get(for: provider) ?? "",
-                secure: true)
-        else { return }
-        KeychainStore.set(value, for: provider)
-        applySettingsToEngine()
-        refreshMenu()
-    }
-
-    @objc private func setVocabulary() {
-        guard
-            let value = prompt(
-                title: "Custom vocabulary",
-                message:
-                    "Comma-separated names and jargon to bias transcription toward. Keep it short — providers cap this.",
-                initial: Settings.vocabularyTerms.joined(separator: ", "),
-                secure: false)
-        else { return }
-        Settings.vocabularyTerms =
-            value.split(separator: ",").map { $0.trimmingCharacters(in: .whitespaces) }
-        applySettingsToEngine()
-    }
-
-    private func prompt(title: String, message: String, initial: String, secure: Bool) -> String? {
-        // A menu-bar app has no key window, so the alert must be brought forward
-        // explicitly or it opens behind whatever the user was using.
-        NSApp.activate(ignoringOtherApps: true)
-
-        let alert = NSAlert()
-        alert.messageText = title
-        alert.informativeText = message
-        alert.addButton(withTitle: "Save")
-        alert.addButton(withTitle: "Cancel")
-
-        let field: NSTextField =
-            secure
-            ? NSSecureTextField(frame: NSRect(x: 0, y: 0, width: 320, height: 24))
-            : NSTextField(frame: NSRect(x: 0, y: 0, width: 320, height: 24))
-        field.stringValue = initial
-        alert.accessoryView = field
-        alert.window.initialFirstResponder = field
-
-        guard alert.runModal() == .alertFirstButtonReturn else { return nil }
-        return field.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
-    }
 }
