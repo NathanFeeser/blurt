@@ -114,9 +114,15 @@ final class AudioEngine {
     }
 
     /// Releases the microphone. The graph stays configured for the next press.
+    ///
+    /// Clearing the capture buffer here is not optional: the core's pre-roll
+    /// ring would otherwise still hold the tail of this dictation, and seed the
+    /// next one with it. The core also guards against this by age, but a shell
+    /// that closes the microphone should say so rather than rely on a timeout.
     private func stopEngine() {
         guard isRunning else { return }
         engine.stop()
+        capture.reset()
         isRunning = false
         level = 0
     }

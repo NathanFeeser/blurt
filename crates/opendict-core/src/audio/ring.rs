@@ -1,5 +1,6 @@
 use std::collections::VecDeque;
 use std::sync::Mutex;
+use std::time::{Duration, Instant};
 
 use super::{PREROLL_MS, SAMPLE_RATE};
 
@@ -17,6 +18,7 @@ use super::{PREROLL_MS, SAMPLE_RATE};
 #[derive(uniffi::Object)]
 pub struct AudioCapture {
     inner: Mutex<Inner>,
+    stale_after: Duration,
 }
 
 struct Inner {
@@ -24,7 +26,19 @@ struct Inner {
     preroll_capacity: usize,
     recording: Option<Vec<f32>>,
     peak: f32,
+    /// When audio last arrived. Pre-roll is only meaningful if it is
+    /// *continuous* with what is about to be recorded.
+    last_push: Option<Instant>,
 }
+
+/// How long a gap in incoming audio makes the pre-roll buffer worthless.
+///
+/// A shell that opens the microphone per dictation (which macOS does, so the
+/// recording indicator is lit only while dictating) leaves the ring holding the
+/// tail of the *previous* dictation. Seeding from that prepends the user's last
+/// word to their next sentence. Slightly longer than the pre-roll window itself,
+/// so ordinary jitter in the audio callback never trips it.
+const PREROLL_STALE_AFTER: Duration = Duration::from_millis(400);
 
 /// A snapshot for the recording overlay's level meter.
 #[derive(Debug, Clone, uniffi::Record)]
@@ -53,7 +67,9 @@ impl AudioCapture {
                 preroll_capacity,
                 recording: None,
                 peak: 0.0,
+                last_push: None,
             }),
+            stale_after: PREROLL_STALE_AFTER,
         }
     }
 
@@ -63,6 +79,7 @@ impl AudioCapture {
     pub fn push(&self, frames: Vec<f32>) -> f32 {
         let level = rms(&frames);
         let mut inner = self.inner.lock().unwrap();
+        inner.last_push = Some(Instant::now());
 
         if let Some(rec) = inner.recording.as_mut() {
             rec.extend_from_slice(&frames);
@@ -84,11 +101,34 @@ impl AudioCapture {
     }
 
     /// Begin a dictation, seeded with the buffered pre-roll.
+    ///
+    /// The pre-roll is used only when it is continuous with this recording. If
+    /// the microphone was closed in between, that buffer holds the end of the
+    /// previous dictation and must be thrown away — otherwise the user's last
+    /// word is prepended to their next sentence.
     pub fn start(&self) {
         let mut inner = self.inner.lock().unwrap();
+
+        let fresh = inner
+            .last_push
+            .map(|t| t.elapsed() < self.stale_after)
+            .unwrap_or(false);
+        if !fresh {
+            inner.preroll.clear();
+        }
+
         let seed: Vec<f32> = inner.preroll.iter().copied().collect();
         inner.peak = 0.0;
         inner.recording = Some(seed);
+    }
+
+    /// Drop any buffered pre-roll. Shells call this when they close the
+    /// microphone, so nothing survives to leak into the next dictation. The
+    /// staleness check in `start` is the backstop for shells that forget.
+    pub fn reset(&self) {
+        let mut inner = self.inner.lock().unwrap();
+        inner.preroll.clear();
+        inner.last_push = None;
     }
 
     /// End the dictation and take the samples. Returns empty if not recording.
@@ -135,6 +175,16 @@ fn rms(frames: &[f32]) -> f32 {
     (sum / frames.len() as f32).sqrt().clamp(0.0, 1.0)
 }
 
+impl AudioCapture {
+    /// Test-only: shorten the staleness window so tests need not really wait.
+    #[cfg(test)]
+    fn with_stale_after(preroll_ms: u32, stale_after: Duration) -> Self {
+        let mut c = Self::with_preroll_ms(preroll_ms);
+        c.stale_after = stale_after;
+        c
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -166,6 +216,48 @@ mod tests {
         let cap = AudioCapture::new();
         cap.push(vec![0.3; 1000]);
         assert!(cap.stop().is_empty());
+    }
+
+    #[test]
+    fn stale_preroll_does_not_leak_into_the_next_dictation() {
+        // Reproduces the reported bug: dictate, close the mic, dictate again,
+        // and the tail of the first recording appears at the head of the second.
+        let cap = AudioCapture::with_stale_after(10, Duration::from_millis(5));
+
+        cap.push(vec![0.9; 160]); // first dictation's audio
+        cap.start();
+        let _ = cap.stop();
+
+        std::thread::sleep(Duration::from_millis(20)); // microphone closed
+
+        cap.start();
+        cap.push(vec![0.1; 100]);
+        let second = cap.stop();
+
+        assert_eq!(second.len(), 100, "stale pre-roll must be discarded");
+        assert!(
+            second.iter().all(|&s| s == 0.1),
+            "no audio from the previous dictation may survive"
+        );
+    }
+
+    #[test]
+    fn fresh_preroll_is_still_used() {
+        let cap = AudioCapture::with_stale_after(10, Duration::from_millis(500));
+        cap.push(vec![0.5; 160]);
+        cap.start();
+        cap.push(vec![0.25; 100]);
+        let out = cap.stop();
+        assert_eq!(out.len(), 260, "continuous audio must keep its pre-roll");
+    }
+
+    #[test]
+    fn reset_clears_the_preroll() {
+        let cap = AudioCapture::with_preroll_ms(10);
+        cap.push(vec![0.7; 160]);
+        cap.reset();
+        cap.start();
+        assert!(cap.stop().is_empty(), "reset must drop buffered audio");
     }
 
     #[test]
