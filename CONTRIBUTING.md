@@ -16,6 +16,12 @@ cargo test --all                     # 79 core tests
 swift test --package-path apps/macos # 56 app tests
 ```
 
+`swift-smoke.sh` is not part of the app build, so run it after changing anything
+on the UniFFI boundary. Adding a field to a core record breaks it on purpose:
+the smoke test constructs those records by hand, which makes a change to the
+boundary a compile error somewhere you will notice rather than a surprise in a
+shell you were not thinking about.
+
 `build-macos-app.sh` always rebuilds the Rust core and regenerates the Swift
 bindings. That is deliberate: stale FFI bindings fail in confusing ways, and
 cargo already no-ops when nothing changed. Set `BLURT_SKIP_TESTS=1` to skip the

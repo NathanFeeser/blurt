@@ -55,7 +55,8 @@ var mode = Mode(
     cleanup: nil,
     cleanupInstructions: nil,
     appMatches: ["com.example.smoke"],
-    allowCleanupSkip: true
+    allowCleanupSkip: true,
+    recordHistory: false
 )
 engine.setModes(modes: [mode])
 check("setModes repoints a dangling active id", engine.activeModeId() == "smoke")
