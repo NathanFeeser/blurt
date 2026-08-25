@@ -24,7 +24,7 @@ The macOS app is usable every day, today, by anyone willing to build it.
 - Screen-context and custom vocabulary injection
 - Local history with search, re-run, and undo
 - Microphone pinning, so a Bluetooth headset cannot quietly take over dictation
-- Keychain key storage, a settings UI, and 135 tests
+- Keychain key storage, a settings UI, and a test suite across both languages
 
 ## Now — finishing the macOS app
 
@@ -33,11 +33,10 @@ toolchain.
 
 - [ ] **Developer ID signing, notarization, and Sparkle updates.** The actual
       gate on a public download.
-- [ ] **Streaming transcription** as a per-mode setting. Batch is 5–10x cheaper
-      and is the right default; streaming is what removes the upload and most of
-      the transcription time from the critical path. The latency budget is
-      currently missed for exactly this reason — p50 ≈ 750 ms against a 600 ms
-      target, measured, documented in `docs/ARCHITECTURE.md`.
+- [ ] **Streaming transcription** as a per-mode setting. Batch is substantially
+      cheaper and is the right default; streaming is what removes the upload and
+      most of the transcription time from the critical path, which is the
+      difference between fast and instant.
 - [ ] **Deeper screen-context scraping.** What exists is shallow. This is where
       most of the perceived intelligence lives.
 - [ ] **More providers** — ElevenLabs and Qwen adapters.
@@ -54,10 +53,11 @@ toolchain.
 - [ ] **Audio-level cases.** Every case today feeds clean text to the cleanup
       stage, so an entire class of failure — degraded microphone, clipped audio,
       background noise — is invisible to the suite. A real quality regression
-      caused by a Bluetooth mic went undetected by 21 passing cases.
+      caused by a Bluetooth microphone went undetected by every passing case.
 - [ ] **CI gate on prompt and model changes**, so a prompt edit that regresses
       "leave clean text alone" fails the build.
-- [ ] **Latency instrumentation** enforcing the p50/p95 budget.
+- [ ] **Latency instrumentation** enforcing the budget in
+      `docs/ARCHITECTURE.md` rather than trusting that it holds.
 - [ ] **A published benchmark table** comparing provider and prompt combinations.
       Nobody has a good public benchmark for dictation as opposed to
       transcription, and building one in the open is worth more than any feature

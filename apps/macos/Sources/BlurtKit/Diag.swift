@@ -16,7 +16,7 @@ enum Diag {
     /// Serialises writes and guarantees the file exists before opening a handle.
     /// The first version of this raced on creation and dropped lines, which is a
     /// spectacularly bad property for the tool you are using to debug a race.
-    private static let queue = DispatchQueue(label: "sh.blurt.diag")
+    private static let queue = DispatchQueue(label: "com.nerflabs.blurt.diag")
 
     static func log(_ message: String) {
         let line = "\(Date().formatted(date: .omitted, time: .standard))  \(message)\n"

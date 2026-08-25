@@ -8,7 +8,7 @@ import Security
 /// least careful place it gets written. See the privacy model in
 /// docs/ARCHITECTURE.md.
 enum KeychainStore {
-    private static let service = "sh.blurt.Blurt"
+    private static let service = "com.nerflabs.blurt"
 
     static func set(_ value: String?, for providerId: String) {
         // Delete first: SecItemUpdate needs a different code path and this is

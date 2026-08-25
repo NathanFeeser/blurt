@@ -7,7 +7,7 @@
     <key>CFBundleDisplayName</key>
     <string>Blurt</string>
     <key>CFBundleIdentifier</key>
-    <string>sh.blurt.Blurt</string>
+    <string>com.nerflabs.blurt</string>
     <key>CFBundleExecutable</key>
     <string>Blurt</string>
     <key>CFBundlePackageType</key>
