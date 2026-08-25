@@ -60,6 +60,38 @@ struct InputQualityTests {
     }
 }
 
+/// The bug this exists to prevent, reported from real use: the system default
+/// input was changed to a different microphone and the app went on recording
+/// from the old one, because the graph had already been built and nothing
+/// rebuilt it.
+@Suite("Rebinding")
+struct RebuildTests {
+
+    @Test("A changed device forces a rebuild")
+    func changedDeviceRebuilds() {
+        #expect(AudioDevices.shouldRebuild(bound: 41, desired: 77))
+    }
+
+    @Test("The same device does not")
+    func sameDeviceDoesNotRebuild() {
+        // The check runs on every press, so a false positive would tear down
+        // and rebuild the graph before every dictation.
+        #expect(!AudioDevices.shouldRebuild(bound: 41, desired: 41))
+    }
+
+    @Test("An unbuilt graph is not a rebuild")
+    func unboundNeedsNoRebuild() {
+        #expect(!AudioDevices.shouldRebuild(bound: nil, desired: 77))
+    }
+
+    @Test("No available device leaves the graph alone")
+    func noDesiredDeviceLeavesItAlone() {
+        // Nothing to switch to. Tearing down what works in favour of nothing
+        // would turn "no default input right now" into a broken hotkey.
+        #expect(!AudioDevices.shouldRebuild(bound: 41, desired: nil))
+    }
+}
+
 @Suite("Microphone selection")
 struct InputResolutionTests {
     private let builtIn = device()

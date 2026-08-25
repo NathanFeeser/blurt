@@ -24,6 +24,9 @@ final class AudioEngine {
     private var targetFormat: AVAudioFormat?
     private var isRunning = false
     private var isConfigured = false
+    /// The device the input node is currently bound to, read back from the
+    /// audio unit rather than remembered from what we asked for.
+    private var boundDeviceID: AudioDeviceID?
 
     /// Most recent RMS level, for the overlay meter.
     private(set) var level: Float = 0
@@ -96,48 +99,79 @@ final class AudioEngine {
     /// but says so, because recording from something you did not choose is
     /// exactly what this is here to prevent.
     private func bindInputDevice(_ input: AVAudioInputNode) {
-        let devices = AudioDevices.inputDevices()
-        let resolution = AudioDevices.resolve(
-            preferredUID: Settings.inputDeviceUID, among: devices)
+        let target = desiredDevice(loggingProblems: true)
 
-        var chosen: AudioInputDevice?
-        switch resolution {
-        case .systemDefault:
-            chosen = AudioDevices.defaultInputDevice()
-        case .pinned(let device):
-            if let unit = input.audioUnit {
-                var id = device.id
-                let status = AudioUnitSetProperty(
-                    unit,
-                    kAudioOutputUnitProperty_CurrentDevice,
-                    kAudioUnitScope_Global,
-                    0,
-                    &id,
-                    UInt32(MemoryLayout<AudioDeviceID>.size))
-                if status != noErr {
-                    Diag.log("could not bind \(device.name) (status \(status)); using the default")
-                    chosen = AudioDevices.defaultInputDevice()
-                } else {
-                    chosen = device
-                }
+        // Bind explicitly even when the user has expressed no preference.
+        //
+        // Leaving the node alone in that case looks equivalent — it was built
+        // against the default, after all — but the binding is made once and then
+        // latched: changing the default input in System Settings afterwards
+        // leaves the node happily recording from the old microphone. "System
+        // default" has to mean the default as of *this* graph build.
+        if let unit = input.audioUnit, let target {
+            var id = target.id
+            let status = AudioUnitSetProperty(
+                unit,
+                kAudioOutputUnitProperty_CurrentDevice,
+                kAudioUnitScope_Global,
+                0,
+                &id,
+                UInt32(MemoryLayout<AudioDeviceID>.size))
+            if status != noErr {
+                Diag.log("could not bind \(target.name) (status \(status))")
             }
-        case .pinnedMissing(let uid):
-            Diag.log("pinned microphone \(uid) is not attached; using the system default")
-            chosen = AudioDevices.defaultInputDevice()
         }
 
-        currentDevice = chosen
-        currentQuality = chosen.map(AudioDevices.quality(of:)) ?? .fine
-        if let chosen {
+        // Report what the unit is bound to, not what it was asked to bind to.
+        // Those two can disagree, and a UI that names a microphone the app is
+        // not recording from is worse than one that names none at all — it
+        // sends you looking for the problem somewhere else entirely.
+        let actual =
+            input.audioUnit
+            .flatMap(Self.boundDevice)
+            .flatMap(AudioDevices.device(withID:)) ?? target
+
+        boundDeviceID = actual?.id
+        currentDevice = actual
+        currentQuality = actual.map(AudioDevices.quality(of:)) ?? .fine
+        if let actual {
             // One line per graph build, for the same reason the hotkey logs
             // every press: the input device is invisible until it is written
             // down, and it determines more of the output quality than anything
             // else in the pipeline.
             Diag.log(
-                "recording from \(chosen.name) at \(Int(chosen.sampleRate)) Hz "
-                    + "(\(chosen.transport))"
+                "recording from \(actual.name) at \(Int(actual.sampleRate)) Hz "
+                    + "(\(actual.transport))"
                     + (currentQuality.warning.map { " — WARNING \($0)" } ?? ""))
         }
+    }
+
+    /// The microphone that should be recording right now.
+    private func desiredDevice(loggingProblems: Bool = false) -> AudioInputDevice? {
+        // No preference needs no enumeration — two property reads instead of a
+        // sweep of every device, on the hotkey path.
+        guard let preferred = Settings.inputDeviceUID else {
+            return AudioDevices.defaultInputDevice()
+        }
+        switch AudioDevices.resolve(preferredUID: preferred, among: AudioDevices.inputDevices()) {
+        case .pinned(let device):
+            return device
+        case .pinnedMissing(let uid):
+            if loggingProblems {
+                Diag.log("pinned microphone \(uid) is not attached; using the system default")
+            }
+            return AudioDevices.defaultInputDevice()
+        case .systemDefault:
+            return AudioDevices.defaultInputDevice()
+        }
+    }
+
+    private static func boundDevice(_ unit: AudioUnit) -> AudioDeviceID? {
+        var id = AudioDeviceID(0)
+        var size = UInt32(MemoryLayout<AudioDeviceID>.size)
+        let status = AudioUnitGetProperty(
+            unit, kAudioOutputUnitProperty_CurrentDevice, kAudioUnitScope_Global, 0, &id, &size)
+        return status == noErr && id != 0 ? id : nil
     }
 
     /// Warm the graph without opening the microphone. Called at launch so the
@@ -153,6 +187,15 @@ final class AudioEngine {
     /// Opens the microphone and begins buffering. The orange indicator lights
     /// here and goes out in `endRecording()`/`cancelRecording()`.
     func beginRecording() throws {
+        // Re-check the device on every press rather than trusting the
+        // configuration-change notification. Changing the default input in
+        // System Settings does not reliably rebuild an already-built graph, and
+        // the failure mode is silent: the old microphone keeps recording while
+        // everything reports the new one.
+        if AudioDevices.shouldRebuild(bound: boundDeviceID, desired: desiredDevice()?.id) {
+            Diag.log("input device changed since the graph was built; rebuilding")
+            invalidateDevice()
+        }
         try configure()
         if !isRunning {
             let t0 = ProcessInfo.processInfo.systemUptime
@@ -198,6 +241,7 @@ final class AudioEngine {
         isConfigured = false
         converter = nil
         targetFormat = nil
+        boundDeviceID = nil
     }
 
     /// Full teardown, for app exit.
@@ -260,6 +304,7 @@ final class AudioEngine {
         isConfigured = false
         converter = nil
         targetFormat = nil
+        boundDeviceID = nil
         Diag.log("audio device changed; graph will rebuild on next use")
 
         if wasRecording {

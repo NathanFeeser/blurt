@@ -89,6 +89,24 @@ enum AudioDevices {
 
     // MARK: - CoreAudio
 
+    /// Whether the graph has to be torn down because the microphone it is bound
+    /// to is no longer the one we want.
+    ///
+    /// Checked before every recording rather than waiting for a configuration
+    /// notification. Changing the system default input does not reliably rebuild
+    /// an already-built graph, so an app that only reacts to notifications keeps
+    /// recording from the old device long after the user moved the default.
+    static func shouldRebuild(bound: AudioDeviceID?, desired: AudioDeviceID?) -> Bool {
+        guard let bound, let desired else { return false }
+        return bound != desired
+    }
+
+    /// Describe a device by id. Used to report what the input node is *actually*
+    /// bound to, rather than what it was asked to bind to.
+    static func device(withID id: AudioDeviceID) -> AudioInputDevice? {
+        describe(id)
+    }
+
     /// Every device that can currently record.
     static func inputDevices() -> [AudioInputDevice] {
         deviceIDs()
