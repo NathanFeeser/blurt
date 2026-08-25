@@ -85,6 +85,13 @@ app: it removes exactly the inserted text when it can still see it, falls back
 to ⌘Z, and refuses outright once you have switched apps. History is off for the
 Private preset and can be switched off per mode or entirely.
 
+If the hotkey does nothing at all, check whether another app binds the same key.
+A global event tap that *consumes* the key press sits upstream of the monitor
+OpenDict listens on, so the press never arrives — and because the permission and
+the monitor are both fine, nothing anywhere reports a problem. `~/Library/Logs/
+OpenDict.log` records every arriving press, so an empty log during a press is
+the signature of this. Settings → Gestures moves OpenDict to a different key.
+
 Rebuilds are ad-hoc signed, and macOS ties permission grants to the signature, so
 each rebuild is treated as a new app. Set `OPENDICT_SIGN_IDENTITY` to a stable
 Developer ID to keep your grants across builds.

@@ -117,6 +117,14 @@ final class HotkeyMonitor {
 
         guard event.type == .flagsChanged, event.keyCode == key.keyCode else { return }
 
+        // Two lines per dictation, and they answer the first question every
+        // "nothing happened" report raises: did the key event reach us at all?
+        // Everything downstream of here fails loudly; event delivery is the one
+        // step that fails in complete silence.
+        Diag.log(
+            "hotkey \(key.rawValue) "
+                + "\(event.modifierFlags.contains(key.flag) ? "down" : "up")")
+
         // `flagsChanged` reports the state after the change, and keyCode tells us
         // which physical key caused it. Both are needed: the flag alone cannot
         // distinguish left Option from right.

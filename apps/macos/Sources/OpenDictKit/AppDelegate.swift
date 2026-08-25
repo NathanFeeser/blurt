@@ -18,6 +18,11 @@ public final class AppDelegate: NSObject, NSApplicationDelegate {
     private var lastInsertion: TextInserter.Insertion?
     private var isBusy = false
     private var handsFreeCap: DispatchWorkItem?
+    /// Releases the hotkey if a transcription never returns. See `beginBusy`.
+    private var busyWatchdog: DispatchWorkItem?
+    /// Bumped whenever a transcription is abandoned, so a result that arrives
+    /// afterwards can recognise that nobody is waiting for it any more.
+    private var dictationGeneration = 0
     /// The selection captured when command mode started. Held because the user
     /// may click elsewhere while speaking, and the instruction applies to what
     /// was selected at the moment they pressed the key.
@@ -34,6 +39,15 @@ public final class AppDelegate: NSObject, NSApplicationDelegate {
     /// Ten minutes of 16 kHz mono is ~38 MB — generous for a long hands-free
     /// dictation, and a hard stop against one left running by accident.
     private static let maxRecordingSeconds: TimeInterval = 600
+
+    /// How long a transcription may run before the hotkey is handed back.
+    ///
+    /// The HTTP client self-limits at 30 s, but the on-device path has no
+    /// timeout at all: a wedged WhisperKit call would strand `isBusy` and take
+    /// the hotkey down with it for the rest of the session, which is
+    /// indistinguishable from a dead hotkey. Generous enough to clear a cold
+    /// model load (~8 s) plus a long dictation, and still bounded.
+    private static let transcriptionTimeout: TimeInterval = 60
 
     public override init() { super.init() }
 
@@ -209,7 +223,7 @@ public final class AppDelegate: NSObject, NSApplicationDelegate {
         }
 
         overlay.show(.transcribing)
-        isBusy = true
+        let generation = beginBusy()
 
         Task { [engine, overlay] in
             let ctx = AppContext(
@@ -221,10 +235,11 @@ public final class AppDelegate: NSObject, NSApplicationDelegate {
             )
             do {
                 let result = try await engine.runCommand(samples: samples, ctx: ctx)
-                await MainActor.run { self.finish(result) }
+                await MainActor.run { self.finish(result, generation: generation) }
             } catch {
                 await MainActor.run {
-                    self.isBusy = false
+                    guard self.isCurrent(generation) else { return }
+                    self.endBusy()
                     Diag.log("command failed: \(error)")
                     overlay.flashError(Self.describe(error))
                 }
@@ -232,10 +247,55 @@ public final class AppDelegate: NSObject, NSApplicationDelegate {
         }
     }
 
+    // MARK: - The busy flag
+
+    /// Claim the pipeline, and arm the watchdog that gives it back.
+    ///
+    /// Returns the generation this attempt belongs to. A result carrying a stale
+    /// generation is dropped rather than inserted: text pasted a minute late
+    /// lands in whatever the user has moved on to, which is worse than losing it.
+    private func beginBusy() -> Int {
+        isBusy = true
+        dictationGeneration += 1
+        let generation = dictationGeneration
+
+        busyWatchdog?.cancel()
+        let work = DispatchWorkItem { [weak self] in
+            guard let self, self.isBusy, self.dictationGeneration == generation else { return }
+            Diag.log(
+                "transcription did not return within \(Int(Self.transcriptionTimeout))s; "
+                    + "releasing the hotkey")
+            // Bumping the generation is what makes the abandonment stick.
+            self.dictationGeneration += 1
+            self.isBusy = false
+            self.overlay.flashError("Transcription timed out")
+        }
+        busyWatchdog = work
+        DispatchQueue.main.asyncAfter(deadline: .now() + Self.transcriptionTimeout, execute: work)
+        return generation
+    }
+
+    private func endBusy() {
+        busyWatchdog?.cancel()
+        busyWatchdog = nil
+        isBusy = false
+    }
+
+    /// Whether a result that just arrived is still the one being waited on.
+    private func isCurrent(_ generation: Int) -> Bool {
+        generation == dictationGeneration
+    }
+
     // MARK: - Dictation flow
 
     private func beginDictation() {
-        guard !isBusy else { return }
+        guard !isBusy else {
+            // Silently ignoring the key here is indistinguishable from a dead
+            // hotkey, and a transcription that never returns would strand this
+            // flag and take the hotkey down with it.
+            Diag.log("hotkey pressed while the previous dictation is still in flight; ignoring")
+            return
+        }
         do {
             try audio.beginRecording()
         } catch {
@@ -310,7 +370,7 @@ public final class AppDelegate: NSObject, NSApplicationDelegate {
         }
 
         overlay.show(.transcribing)
-        isBusy = true
+        let generation = beginBusy()
 
         Task { [engine, overlay] in
             // AX reads are synchronous IPC and can block; keep them off the
@@ -325,11 +385,12 @@ public final class AppDelegate: NSObject, NSApplicationDelegate {
             do {
                 let result = try await engine.transcribe(samples: samples, ctx: context)
                 await MainActor.run {
-                    self.finish(result)
+                    self.finish(result, generation: generation)
                 }
             } catch {
                 await MainActor.run {
-                    self.isBusy = false
+                    guard self.isCurrent(generation) else { return }
+                    self.endBusy()
                     Diag.log("transcription failed: \(error)")
                     overlay.flashError(Self.describe(error))
                 }
@@ -337,12 +398,21 @@ public final class AppDelegate: NSObject, NSApplicationDelegate {
         }
     }
 
-    private func finish(_ result: DictationResult) {
-        isBusy = false
+    private func finish(_ result: DictationResult, generation: Int) {
+        // The watchdog already gave up on this one and the user has moved on.
+        // Inserting now would paste into whatever they are doing instead.
+        guard isCurrent(generation) else {
+            Diag.log("dropped a transcription that arrived after the timeout")
+            return
+        }
+        endBusy()
         lastResult = result
         overlay.hide()
 
         guard !result.finalText.isEmpty else {
+            // Logged because otherwise a dictation into silence leaves no trace
+            // at all, which reads exactly like a dictation that vanished.
+            Diag.log("transcribed to nothing; inserting nothing")
             overlay.flashError("Nothing was said")
             return
         }
