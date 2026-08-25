@@ -7,12 +7,6 @@ Bring your own API key — or run the whole thing on your own machine.
 [![License](https://img.shields.io/badge/license-Apache--2.0-blue.svg)](LICENSE)
 ![Platform](https://img.shields.io/badge/platform-macOS%2013%2B-lightgrey)
 
-> **Status: early, and honest about it.** The macOS app is dogfooded daily by its
-> author and is where all the polish is. There is no signed release yet — you
-> build it from source, which takes about two minutes. iOS and Windows are real
-> plans, not aspirations, and the portable core already compiles for both. See
-> [ROADMAP.md](ROADMAP.md).
-
 ## Why this exists
 
 Dictation is a solved research problem and an unsolved product problem. Wispr
