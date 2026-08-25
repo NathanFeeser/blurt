@@ -22,6 +22,7 @@ enum Settings {
         static let vocabulary = "vocabulary"
         static let localModelVariant = "localModelVariant"
         static let activeModeId = "activeModeId"
+        static let inputDeviceUID = "inputDeviceUID"
         static let historyEnabled = "historyEnabled"
         static let historyLimit = "historyLimit"
         static let baseUrlPrefix = "baseUrl."
@@ -142,6 +143,20 @@ enum Settings {
     static var activeModeId: String {
         get { d.string(forKey: Key.activeModeId) ?? "default" }
         set { d.set(newValue, forKey: Key.activeModeId) }
+    }
+
+    /// The microphone to record from, by CoreAudio UID. Empty means "follow the
+    /// system default", which is the old behaviour and stays the default.
+    ///
+    /// Pinning exists because the system default is a shared setting that other
+    /// things change: connecting earbuds moves it, and dictation quality falls
+    /// off a cliff without anything announcing it.
+    static var inputDeviceUID: String? {
+        get {
+            let v = d.string(forKey: Key.inputDeviceUID) ?? ""
+            return v.isEmpty ? nil : v
+        }
+        set { d.set(newValue ?? "", forKey: Key.inputDeviceUID) }
     }
 
     /// Whether finished dictations are written to the local history database.

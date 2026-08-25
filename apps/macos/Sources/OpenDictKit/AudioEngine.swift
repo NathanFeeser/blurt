@@ -28,6 +28,12 @@ final class AudioEngine {
     /// Most recent RMS level, for the overlay meter.
     private(set) var level: Float = 0
 
+    /// The device the graph is currently bound to, and what we think of it.
+    /// Read by the UI so the microphone in use is never invisible — a silently
+    /// switched input is the one failure that looks exactly like a bad model.
+    private(set) var currentDevice: AudioInputDevice?
+    private(set) var currentQuality: InputQuality = .fine
+
     var onLevel: ((Float) -> Void)?
     /// A recording was abandoned because the audio device changed underneath it.
     var onInterrupted: (() -> Void)?
@@ -47,6 +53,10 @@ final class AudioEngine {
         guard !isConfigured else { return }
 
         let input = engine.inputNode
+        // Bind the device *before* reading the format: the format belongs to
+        // whatever device the node is pointed at, and reading it first would
+        // build a converter for the wrong one.
+        bindInputDevice(input)
         let inputFormat = input.outputFormat(forBus: 0)
 
         // A zero sample rate means no usable input device — starting the engine
@@ -76,6 +86,58 @@ final class AudioEngine {
 
         engine.prepare()
         isConfigured = true
+    }
+
+    /// Point the input node at the user's chosen microphone.
+    ///
+    /// Without this the node follows the system default, which is how a pair of
+    /// earbuds connecting can silently take over dictation. A pinned device that
+    /// is not currently attached falls back to the default rather than failing —
+    /// but says so, because recording from something you did not choose is
+    /// exactly what this is here to prevent.
+    private func bindInputDevice(_ input: AVAudioInputNode) {
+        let devices = AudioDevices.inputDevices()
+        let resolution = AudioDevices.resolve(
+            preferredUID: Settings.inputDeviceUID, among: devices)
+
+        var chosen: AudioInputDevice?
+        switch resolution {
+        case .systemDefault:
+            chosen = AudioDevices.defaultInputDevice()
+        case .pinned(let device):
+            if let unit = input.audioUnit {
+                var id = device.id
+                let status = AudioUnitSetProperty(
+                    unit,
+                    kAudioOutputUnitProperty_CurrentDevice,
+                    kAudioUnitScope_Global,
+                    0,
+                    &id,
+                    UInt32(MemoryLayout<AudioDeviceID>.size))
+                if status != noErr {
+                    Diag.log("could not bind \(device.name) (status \(status)); using the default")
+                    chosen = AudioDevices.defaultInputDevice()
+                } else {
+                    chosen = device
+                }
+            }
+        case .pinnedMissing(let uid):
+            Diag.log("pinned microphone \(uid) is not attached; using the system default")
+            chosen = AudioDevices.defaultInputDevice()
+        }
+
+        currentDevice = chosen
+        currentQuality = chosen.map(AudioDevices.quality(of:)) ?? .fine
+        if let chosen {
+            // One line per graph build, for the same reason the hotkey logs
+            // every press: the input device is invisible until it is written
+            // down, and it determines more of the output quality than anything
+            // else in the pipeline.
+            Diag.log(
+                "recording from \(chosen.name) at \(Int(chosen.sampleRate)) Hz "
+                    + "(\(chosen.transport))"
+                    + (currentQuality.warning.map { " — WARNING \($0)" } ?? ""))
+        }
     }
 
     /// Warm the graph without opening the microphone. Called at launch so the
@@ -125,6 +187,17 @@ final class AudioEngine {
         capture.reset()
         isRunning = false
         level = 0
+    }
+
+    /// Drop the graph so the next press rebuilds it against a different device.
+    /// Called when the user picks a different microphone.
+    func invalidateDevice() {
+        guard isConfigured else { return }
+        stopEngine()
+        engine.inputNode.removeTap(onBus: 0)
+        isConfigured = false
+        converter = nil
+        targetFormat = nil
     }
 
     /// Full teardown, for app exit.

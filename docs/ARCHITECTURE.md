@@ -176,6 +176,30 @@ filler removal · punctuation and capitalization · self-corrections ("Tuesday, 
 proper-noun spelling from context · tone matching per app · code-awareness in editors ·
 leaving already-correct text alone (the most common failure mode is over-editing).
 
+## Audio input
+
+The microphone is the highest-leverage part of the pipeline and the only part
+another application can change behind the user's back. macOS hands a Bluetooth
+headset's mic over in hands-free mode — narrowband, compressed, and aggressively
+noise-gated — and the gate is the real damage: it removes quiet syllables
+outright, so transcripts come back with holes and the model hallucinates to fill
+them. Measured 2026-08-25: identical prompts, once through the built-in array and
+once through connected earbuds, with the second producing transcripts missing
+words mid-sentence, and swapping on-device WhisperKit for Groq changing nothing —
+because the words were never in the signal.
+
+So the shell pins a device rather than following the system default
+(`kAudioOutputUnitProperty_CurrentDevice` on the input node's audio unit), names
+it in the recording overlay, the menu, and the log, and flags a Bluetooth or
+sub-16 kHz input once per device. 16 kHz itself is not flagged: it is exactly
+what transcription wants, and warning about it would train the user to ignore
+the warning.
+
+The lesson generalises past macOS. Every shell will have a version of this, and
+"the model got worse" is what a degraded input looks like from the outside —
+which is why DictBench needs audio-level cases (PLAN.md Phase 2) rather than
+text-only ones.
+
 ## History
 
 Implemented 2026-08-25. `crates/opendict-core/src/history.rs` — SQLite in the core rather

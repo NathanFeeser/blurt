@@ -20,6 +20,8 @@ public final class AppDelegate: NSObject, NSApplicationDelegate {
     private var handsFreeCap: DispatchWorkItem?
     /// Releases the hotkey if a transcription never returns. See `beginBusy`.
     private var busyWatchdog: DispatchWorkItem?
+    /// The device we have already warned about, so the warning appears once.
+    private var warnedAboutDeviceUID: String?
     /// Bumped whenever a transcription is abandoned, so a result that arrives
     /// afterwards can recognise that nobody is waiting for it any more.
     private var dictationGeneration = 0
@@ -61,6 +63,18 @@ public final class AppDelegate: NSObject, NSApplicationDelegate {
                 guard let self else { return }
                 self.hotkey.key = Settings.hotkey
                 self.commandHotkey.key = Settings.commandHotkey
+                self.refreshMenu()
+            }
+        }
+        NotificationCenter.default.addObserver(
+            forName: .openDictInputDeviceChanged, object: nil, queue: .main
+        ) { [weak self] _ in
+            MainActor.assumeIsolated {
+                guard let self else { return }
+                // Drop the graph so the next press rebuilds against the newly
+                // chosen device, and let the warning fire again for it.
+                self.audio.invalidateDevice()
+                self.warnedAboutDeviceUID = nil
                 self.refreshMenu()
             }
         }
@@ -310,10 +324,29 @@ public final class AppDelegate: NSObject, NSApplicationDelegate {
             model.modeMatchedApp(bundleId)
             ? (lastForegroundAppName ?? "this app") : "fallback"
         // Naming the provider is the whole point: "on-device" is a promise about
-        // where the audio goes, and the user needs to see it kept.
-        overlay.modeName = "\(mode.name) · \(where_) · \(Self.sttLabel(mode))"
+        // where the audio goes, and the user needs to see it kept. The
+        // microphone is here for the opposite reason: it is the input that
+        // determines the most and announces itself the least.
+        let mic = audio.currentDevice.map { " · \($0.name)" } ?? ""
+        let warn = audio.currentQuality.warning == nil ? "" : " ⚠︎"
+        overlay.modeName = "\(mode.name) · \(where_) · \(Self.sttLabel(mode))\(mic)\(warn)"
         overlay.show(.recording)
         armHandsFreeCap()
+    }
+
+    /// Tell the user once when they are dictating through a microphone that
+    /// will not do them any favours.
+    ///
+    /// Once per device, not once per dictation: a warning on every press is
+    /// noise, and noise gets ignored precisely when it matters.
+    private func warnAboutMicrophoneIfNeeded() {
+        guard let why = audio.currentQuality.warning, let device = audio.currentDevice else {
+            return
+        }
+        guard warnedAboutDeviceUID != device.uid else { return }
+        warnedAboutDeviceUID = device.uid
+        Diag.log("degraded microphone: \(why)")
+        overlay.flashError(why, seconds: 5)
     }
 
     /// The key was double-tapped: keep recording with the key released.
@@ -451,6 +484,8 @@ public final class AppDelegate: NSObject, NSApplicationDelegate {
             Diag.log("  final: \(result.finalText)")
         }
 
+        warnAboutMicrophoneIfNeeded()
+
         // Cleanup failing is not fatal — the raw transcript was inserted — but
         // it must be visible, or a dead model looks exactly like a working one.
         if let cleanupError = result.cleanupError {
@@ -529,6 +564,14 @@ public final class AppDelegate: NSObject, NSApplicationDelegate {
             title: "Mode: \(effective.name)  (\(reason))", action: nil, keyEquivalent: "")
         modeLine.isEnabled = false
         menu.addItem(modeLine)
+
+        if let device = audio.currentDevice {
+            let warning = audio.currentQuality.warning == nil ? "" : "  ⚠︎ poor for dictation"
+            let micLine = NSMenuItem(
+                title: "Mic: \(device.name)\(warning)", action: nil, keyEquivalent: "")
+            micLine.isEnabled = false
+            menu.addItem(micLine)
+        }
 
         let modeMenu = NSMenu()
         for mode in model.modes {

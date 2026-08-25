@@ -85,6 +85,14 @@ app: it removes exactly the inserted text when it can still see it, falls back
 to ⌘Z, and refuses outright once you have switched apps. History is off for the
 Private preset and can be switched off per mode or entirely.
 
+**Pick your microphone in Settings → General.** OpenDict follows the system
+default input unless you pin one, and the system default is a shared setting
+other things move — connecting Bluetooth earbuds hands dictation to their
+hands-free mic, which is narrowband and noise-gated, and transcripts come back
+with words missing. Pinning the built-in mic keeps dictation there while you
+listen through anything you like. The mic in use is shown while recording, in
+the menu, and in the log, and a Bluetooth one is flagged.
+
 If the hotkey does nothing at all, check whether another app binds the same key.
 A global event tap that *consumes* the key press sits upstream of the monitor
 OpenDict listens on, so the press never arrives — and because the permission and

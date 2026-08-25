@@ -54,12 +54,59 @@ struct GeneralTab: View {
     @State private var cloudProvider = "groq"
     @State private var cleanupModel = ""
     @State private var vocabularyText = ""
+    @State private var inputDeviceUID = Settings.inputDeviceUID ?? ""
+    @State private var inputDevices: [AudioInputDevice] = []
 
     private var usesOnDevice: Bool { model.transcriptionSource == .onDevice }
+
+    /// What is wrong with the microphone that would actually be used — the
+    /// pinned one, or the system default when nothing is pinned.
+    private var microphoneWarning: String? {
+        let device =
+            inputDeviceUID.isEmpty
+            ? AudioDevices.defaultInputDevice()
+            : inputDevices.first { $0.uid == inputDeviceUID }
+        guard let device else {
+            return inputDeviceUID.isEmpty ? nil : "That microphone is not attached right now."
+        }
+        return AudioDevices.quality(of: device).warning
+    }
 
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 22) {
+                // --- Microphone ---------------------------------------------
+                //
+                // First, and above the model choice, because it decides more of
+                // the output quality than the model does and is the only part
+                // of the pipeline something else can change behind your back.
+                VStack(alignment: .leading, spacing: 10) {
+                    Text("Microphone").font(.headline)
+                    Picker("", selection: $inputDeviceUID) {
+                        Text("System default").tag("")
+                        ForEach(inputDevices) { device in
+                            Text(device.name).tag(device.uid)
+                        }
+                    }
+                    .labelsHidden()
+                    .frame(maxWidth: 420)
+                    .onChange(of: inputDeviceUID) { new in
+                        Settings.inputDeviceUID = new.isEmpty ? nil : new
+                        NotificationCenter.default.post(
+                            name: .openDictInputDeviceChanged, object: nil)
+                    }
+
+                    if let warning = microphoneWarning {
+                        Label(warning, systemImage: "exclamationmark.triangle.fill")
+                            .font(.caption).foregroundStyle(.orange)
+                    }
+                    Text(
+                        "Pinning a mic keeps dictation on it even when something else takes over "
+                            + "the system default — connecting earbuds, for instance."
+                    )
+                    .font(.caption).foregroundStyle(.secondary)
+                }
+
                 // --- Transcription ------------------------------------------
                 VStack(alignment: .leading, spacing: 10) {
                     Text("Transcription").font(.headline)
@@ -179,6 +226,11 @@ struct GeneralTab: View {
             vocabularyText = model.vocabulary.joined(separator: "\n")
             cleanupModel = model.cleanupModel
             if case .cloud(let p) = model.transcriptionSource { cloudProvider = p }
+            // Enumerated on appear rather than held: devices come and go while
+            // the window is closed, and a stale list would offer a mic that is
+            // no longer there.
+            inputDevices = AudioDevices.inputDevices()
+            inputDeviceUID = Settings.inputDeviceUID ?? ""
         }
     }
 
@@ -725,4 +777,5 @@ struct GesturesTab: View {
 
 extension Notification.Name {
     static let openDictHotkeysChanged = Notification.Name("openDictHotkeysChanged")
+    static let openDictInputDeviceChanged = Notification.Name("openDictInputDeviceChanged")
 }
