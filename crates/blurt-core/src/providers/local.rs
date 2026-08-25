@@ -66,8 +66,8 @@ impl SttProvider for LocalStt {
 
         let started = std::time::Instant::now();
         // Note: no biasing prompt. WhisperKit exposes one, but routing custom
-        // vocabulary through it is Phase 2 work — see docs/RESEARCH.md on the
-        // 224-token cap and its tail-weighting.
+        // vocabulary through it is later work: the prompt is capped at 224
+        // tokens and weighted towards the end, so it needs its own design.
         let text = self
             .inner
             .transcribe(req.samples, req.language.clone())

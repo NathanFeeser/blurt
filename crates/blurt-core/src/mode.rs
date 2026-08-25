@@ -60,7 +60,7 @@ fn yes() -> bool {
 
 impl Mode {
     /// The out-of-box mode: Groq's turbo Whisper plus a small fast cleanup model.
-    /// Cheapest credible configuration — see the cost table in docs/RESEARCH.md.
+    /// Cheapest credible configuration at the time of writing.
     pub fn default_dictation() -> Self {
         Self {
             id: "default".into(),

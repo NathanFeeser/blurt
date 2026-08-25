@@ -197,7 +197,7 @@ the warning.
 
 The lesson generalises past macOS. Every shell will have a version of this, and
 "the model got worse" is what a degraded input looks like from the outside —
-which is why DictBench needs audio-level cases (PLAN.md Phase 2) rather than
+which is why DictBench needs audio-level cases (see ROADMAP.md) rather than
 text-only ones.
 
 ## History

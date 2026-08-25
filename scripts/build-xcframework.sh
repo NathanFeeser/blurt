@@ -9,7 +9,7 @@
 #   build/Sources/                   <- generated Swift bindings (blurt_core.swift)
 #
 # This script is the load-bearing half of the "Rust core" decision. If it is not
-# green, the decision is not real — see the risk table in docs/PLAN.md.
+# green, the decision is not real.
 set -euo pipefail
 
 cd "$(dirname "$0")/.."

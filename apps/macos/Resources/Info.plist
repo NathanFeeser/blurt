@@ -28,6 +28,6 @@
 
     <!-- No App Sandbox key on purpose. The Accessibility APIs used to read
          context and insert text require an unsandboxed process, which is also
-         why this app can never ship on the Mac App Store. See docs/RESEARCH.md. -->
+         why this app can never ship on the Mac App Store. -->
 </dict>
 </plist>

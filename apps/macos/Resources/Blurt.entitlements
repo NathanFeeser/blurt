@@ -12,6 +12,6 @@
 
     <!-- Deliberately absent: com.apple.security.app-sandbox.
          The Accessibility APIs this app depends on require an unsandboxed
-         process. See docs/RESEARCH.md §3. -->
+         process. -->
 </dict>
 </plist>

@@ -37,8 +37,7 @@ enum Settings {
             Key.sttProvider: "groq",
             Key.sttModel: "whisper-large-v3-turbo",
             Key.llmProvider: "groq",
-            // Chosen by live measurement, not vibes — see the decision log in
-            // docs/PLAN.md.
+            // Chosen by live measurement, not vibes. See docs/DECISIONS.md.
             Key.llmModel: "openai/gpt-oss-120b",
             Key.cleanupEnabled: true,
             // Cleanup is a formatting task, not a reasoning one. Measured on

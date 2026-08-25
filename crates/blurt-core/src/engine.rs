@@ -230,7 +230,7 @@ impl DictationEngine {
     }
 
     /// Record what the user turned the inserted text into — the correction pair
-    /// PLAN.md Phase 6 trains on.
+    /// a future cleanup model would train on.
     pub fn history_record_edit(&self, id: i64, edited: String) -> Result<()> {
         match self.history() {
             Some(h) => h.record_edit(id, &edited),

@@ -125,8 +125,8 @@ Please redact anything private before pasting; history holds real dictation.
 
 ## Decisions already made
 
-`docs/PLAN.md` ends with a decision log — dated entries recording what was
-decided, and what evidence decided it. Before re-opening a settled architectural
-question, check whether it is in there. If the reasoning is wrong, that is worth
+[docs/DECISIONS.md](docs/DECISIONS.md) records what was decided and what
+evidence decided it. Before reopening a settled architectural question, check
+whether it is in there. If the reasoning is wrong, that is worth
 knowing; if the evidence has changed, that is worth knowing too. Either way the
 argument starts from what was already measured.

@@ -1,9 +1,8 @@
 # Roadmap
 
 Blurt is built by one person, so this is sequenced rather than parallel, and the
-gates between phases are real. The internal planning document with the reasoning
-behind each decision lives in [docs/PLAN.md](docs/PLAN.md); this is the public
-version of where things stand.
+gates between phases are real. The reasoning behind individual technical
+decisions is recorded in [docs/DECISIONS.md](docs/DECISIONS.md).
 
 Dates are deliberately absent. The ordering is the commitment.
 

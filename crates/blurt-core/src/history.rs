@@ -3,7 +3,7 @@
 //! Every dictation is a `(raw ASR, final text)` pair produced by a known mode in
 //! a known app. Keeping those is what makes "re-run that with a different
 //! prompt", "undo what you just inserted", and eventually the correction
-//! flywheel in PLAN.md Phase 6 possible. It lives in the core, not the shells,
+//! correction flywheel possible later. It lives in the core, not the shells,
 //! so there is one schema rather than three and a history file written on a Mac
 //! reads on Windows.
 //!
