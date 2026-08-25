@@ -6,11 +6,11 @@ freeflow is macOS-only *because* its pipeline lives inside a 3,414-line SwiftUI 
 If we want macOS + iOS + Windows, the pipeline has to be a library that knows nothing about
 any UI framework.
 
-**Decision (2026-08-24): a portable Rust core (`opendict-core`) with thin native shells.**
+**Decision (2026-08-24): a portable Rust core (`blurt-core`) with thin native shells.**
 
 ```
                     ┌─────────────────────────────────────────┐
-                    │            opendict-core (Rust)         │
+                    │            blurt-core (Rust)         │
                     │                                         │
    audio frames ───►│  ring buffer + pre-roll                 │
                     │  VAD / endpointing                      │
@@ -73,7 +73,7 @@ Practical consequences to plan around:
   an xcframework build script, and CI on macOS/iOS/Windows targets.
 
 Either way: **the pipeline is a library with its own tests and its own CLI.** A
-`opendict transcribe file.wav --mode email` command that runs the exact production path is
+`blurt transcribe file.wav --mode email` command that runs the exact production path is
 what makes the eval harness possible at all.
 
 ## Latency budget
@@ -106,7 +106,7 @@ Three moves get us under budget:
 
 ### Measured baseline (2026-08-24, Groq, batch STT, from a laptop)
 
-12 runs of `opendict transcribe` on 4 TTS clips, release build, warm connection:
+12 runs of `blurt transcribe` on 4 TTS clips, release build, warm connection:
 
 | Path | STT | Cleanup | Total |
 |---|---|---|---|
@@ -202,7 +202,7 @@ text-only ones.
 
 ## History
 
-Implemented 2026-08-25. `crates/opendict-core/src/history.rs` — SQLite in the core rather
+Implemented 2026-08-25. `crates/blurt-core/src/history.rs` — SQLite in the core rather
 than one store per shell, so there is a single schema and a history file written on a Mac
 reads on Windows. The core writes the row itself at the end of `transcribe`/`run_command` and
 returns its id on `DictationResult`; the shell annotates it afterwards with the insertion

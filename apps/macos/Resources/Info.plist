@@ -3,13 +3,13 @@
 <plist version="1.0">
 <dict>
     <key>CFBundleName</key>
-    <string>OpenDict</string>
+    <string>Blurt</string>
     <key>CFBundleDisplayName</key>
-    <string>OpenDict</string>
+    <string>Blurt</string>
     <key>CFBundleIdentifier</key>
-    <string>com.opendict.OpenDict</string>
+    <string>sh.blurt.Blurt</string>
     <key>CFBundleExecutable</key>
-    <string>OpenDict</string>
+    <string>Blurt</string>
     <key>CFBundlePackageType</key>
     <string>APPL</string>
     <key>CFBundleShortVersionString</key>
@@ -24,7 +24,7 @@
     <true/>
 
     <key>NSMicrophoneUsageDescription</key>
-    <string>OpenDict records your voice while you hold the dictation key, and sends it to the transcription provider you configured.</string>
+    <string>Blurt records your voice while you hold the dictation key, and sends it to the transcription provider you configured.</string>
 
     <!-- No App Sandbox key on purpose. The Accessibility APIs used to read
          context and insert text require an unsandboxed process, which is also

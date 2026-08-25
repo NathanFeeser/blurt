@@ -1,12 +1,12 @@
 #!/usr/bin/env bash
-# Build opendict-core as an XCFramework plus Swift bindings for the macOS and
+# Build blurt-core as an XCFramework plus Swift bindings for the macOS and
 # iOS shells.
 #
 #   ./scripts/build-xcframework.sh [--release]
 #
 # Output:
-#   build/OpenDictCore.xcframework   <- drag into Xcode, or reference from SwiftPM
-#   build/Sources/                   <- generated Swift bindings (opendict_core.swift)
+#   build/BlurtCore.xcframework   <- drag into Xcode, or reference from SwiftPM
+#   build/Sources/                   <- generated Swift bindings (blurt_core.swift)
 #
 # This script is the load-bearing half of the "Rust core" decision. If it is not
 # green, the decision is not real — see the risk table in docs/PLAN.md.
@@ -14,9 +14,9 @@ set -euo pipefail
 
 cd "$(dirname "$0")/.."
 ROOT="$PWD"
-CRATE="opendict-core"
-LIB="libopendict_core.a"
-FRAMEWORK="OpenDictCore"
+CRATE="blurt-core"
+LIB="libblurt_core.a"
+FRAMEWORK="BlurtCore"
 
 # macOS ships bash 3.2, where expanding an empty array under `set -u` is an
 # error. A plain string keeps this portable to the system shell.
@@ -57,7 +57,7 @@ echo "==> Generating Swift bindings"
 # never drift from the Rust that produced them.
 cargo run -p "$CRATE" --bin uniffi-bindgen --features uniffi-cli -- \
   generate \
-  --library "$ROOT/target/aarch64-apple-darwin/$PROFILE/libopendict_core.dylib" \
+  --library "$ROOT/target/aarch64-apple-darwin/$PROFILE/libblurt_core.dylib" \
   --language swift \
   --out-dir "$BUILD/Sources" \
   --no-format

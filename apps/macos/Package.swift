@@ -5,7 +5,7 @@ import PackageDescription
 // Both are produced by scripts/build-macos-app.sh and are gitignored — they are
 // build outputs, not sources, and must never be edited by hand.
 let package = Package(
-    name: "OpenDict",
+    name: "Blurt",
     platforms: [.macOS(.v13)],
     dependencies: [
         // WhisperKit runs Whisper on the Neural Engine via CoreML. Pinned to a
@@ -14,13 +14,13 @@ let package = Package(
     ],
     targets: [
         .binaryTarget(
-            name: "opendict_coreFFI",
-            path: "Frameworks/OpenDictCore.xcframework"
+            name: "blurt_coreFFI",
+            path: "Frameworks/BlurtCore.xcframework"
         ),
         .target(
-            name: "OpenDictCore",
-            dependencies: ["opendict_coreFFI"],
-            path: "Sources/OpenDictCore",
+            name: "BlurtCore",
+            dependencies: ["blurt_coreFFI"],
+            path: "Sources/BlurtCore",
             // UniFFI's generated async-callback plumbing does not satisfy Swift
             // 6 strict concurrency. This is machine-generated code we do not
             // edit, so it builds in Swift 5 mode; our own target stays on 6.
@@ -30,22 +30,22 @@ let package = Package(
         // is only an entry point: an executable target's top-level code cannot
         // be linked into a test bundle.
         .target(
-            name: "OpenDictKit",
+            name: "BlurtKit",
             dependencies: [
-                "OpenDictCore",
+                "BlurtCore",
                 .product(name: "WhisperKit", package: "argmax-oss-swift"),
             ],
-            path: "Sources/OpenDictKit"
+            path: "Sources/BlurtKit"
         ),
         .executableTarget(
-            name: "OpenDict",
-            dependencies: ["OpenDictKit"],
-            path: "Sources/OpenDict"
+            name: "Blurt",
+            dependencies: ["BlurtKit"],
+            path: "Sources/Blurt"
         ),
         .testTarget(
-            name: "OpenDictKitTests",
-            dependencies: ["OpenDictKit"],
-            path: "Tests/OpenDictKitTests"
+            name: "BlurtKitTests",
+            dependencies: ["BlurtKit"],
+            path: "Tests/BlurtKitTests"
         ),
     ]
 )

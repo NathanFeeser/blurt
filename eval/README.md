@@ -10,14 +10,14 @@ to leave correct text alone. None of that shows up in WER.
 ## Running it
 
 ```bash
-cargo build --release -p opendict-cli
+cargo build --release -p blurt-cli
 ./run.py                                    # low,medium,high x 3 reps
 ./run.py --efforts low,medium --reps 5      # narrower, more samples
 ./run.py --model qwen/qwen3.6-27b           # compare models
 ./run.py --out results.json                 # keep the raw results
 ```
 
-The harness shells out to `opendict cleanup`, which runs the same
+The harness shells out to `blurt cleanup`, which runs the same
 `pipeline::clean_up` the app uses. An eval that scores a reimplementation of the
 prompt is scoring the wrong thing.
 

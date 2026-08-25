@@ -1,12 +1,12 @@
 [workspace]
-members = ["crates/opendict-core", "crates/opendict-cli"]
+members = ["crates/blurt-core", "crates/blurt-cli"]
 resolver = "2"
 
 [workspace.package]
 version = "0.0.1"
 edition = "2021"
 license = "Apache-2.0"
-repository = "https://github.com/NathanFeeser/opendict"
+repository = "https://github.com/NathanFeeser/blurt"
 
 [workspace.dependencies]
 anyhow = "1"

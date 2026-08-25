@@ -1,0 +1,19 @@
+[package]
+name = "blurt-cli"
+description = "Run the Blurt pipeline from the terminal. The eval harness drives this."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[[bin]]
+name = "blurt"
+path = "src/main.rs"
+
+[dependencies]
+blurt-core = { path = "../blurt-core" }
+anyhow.workspace = true
+clap = { version = "4", features = ["derive"] }
+dotenvy = "0.15"
+serde_json.workspace = true
+tokio = { version = "1", features = ["rt-multi-thread", "macros"] }

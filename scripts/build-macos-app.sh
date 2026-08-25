@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Build OpenDict.app — the macOS menu bar dictation app.
+# Build Blurt.app — the macOS menu bar dictation app.
 #
 #   ./scripts/build-macos-app.sh [--release] [--run]
 #
@@ -35,29 +35,29 @@ fi
 # 2. Stage them into the SwiftPM package. Both are build outputs and gitignored;
 #    they are copied rather than symlinked so `swift build` sees stable paths.
 echo "==> Staging core artifacts"
-mkdir -p "$APPDIR/Frameworks" "$APPDIR/Sources/OpenDictCore"
-rm -rf "$APPDIR/Frameworks/OpenDictCore.xcframework"
-cp -R build/OpenDictCore.xcframework "$APPDIR/Frameworks/"
-cp build/Sources/opendict_core.swift "$APPDIR/Sources/OpenDictCore/"
+mkdir -p "$APPDIR/Frameworks" "$APPDIR/Sources/BlurtCore"
+rm -rf "$APPDIR/Frameworks/BlurtCore.xcframework"
+cp -R build/BlurtCore.xcframework "$APPDIR/Frameworks/"
+cp build/Sources/blurt_core.swift "$APPDIR/Sources/BlurtCore/"
 
 # 3. Compile.
 echo "==> swift build ($CONFIG)"
 swift build --package-path "$APPDIR" -c "$CONFIG"
 
-if [[ "${OPENDICT_SKIP_TESTS:-}" != "1" ]]; then
+if [[ "${BLURT_SKIP_TESTS:-}" != "1" ]]; then
   echo "==> swift test"
   swift test --package-path "$APPDIR" 2>&1 | tail -3
 fi
 
-BIN="$ROOT/$APPDIR/.build/$CONFIG/OpenDict"
+BIN="$ROOT/$APPDIR/.build/$CONFIG/Blurt"
 [[ -x "$BIN" ]] || { echo "build produced no executable at $BIN" >&2; exit 1; }
 
 # 4. Assemble the bundle.
-APP="$ROOT/build/OpenDict.app"
+APP="$ROOT/build/Blurt.app"
 echo "==> Assembling $APP"
 rm -rf "$APP"
 mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
-cp "$BIN" "$APP/Contents/MacOS/OpenDict"
+cp "$BIN" "$APP/Contents/MacOS/Blurt"
 cp "$APPDIR/Resources/Info.plist" "$APP/Contents/Info.plist"
 printf 'APPL????' > "$APP/Contents/PkgInfo"
 
@@ -74,8 +74,8 @@ printf 'APPL????' > "$APP/Contents/PkgInfo"
 #     code signature, so an ad-hoc signature (which changes every build) makes
 #     the system treat each rebuild as a brand new app and drop your grants.
 #     Prefer a real certificate whenever one is available.
-if [[ -n "${OPENDICT_SIGN_IDENTITY:-}" ]]; then
-  IDENTITY="$OPENDICT_SIGN_IDENTITY"
+if [[ -n "${BLURT_SIGN_IDENTITY:-}" ]]; then
+  IDENTITY="$BLURT_SIGN_IDENTITY"
 else
   IDENTITY=$(security find-identity -v -p codesigning 2>/dev/null \
     | grep -m1 -oE '"Apple Development: [^"]+"' | tr -d '"' || true)
@@ -88,7 +88,7 @@ echo "==> Signing as: $IDENTITY"
 codesign --force --deep \
   --sign "$IDENTITY" \
   --options runtime \
-  --entitlements "$APPDIR/Resources/OpenDict.entitlements" \
+  --entitlements "$APPDIR/Resources/Blurt.entitlements" \
   --timestamp=none \
   "$APP"
 

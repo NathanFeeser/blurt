@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """DictBench — score the cleanup stage across configurations.
 
-Drives the real `opendict cleanup` command rather than reimplementing the
+Drives the real `blurt cleanup` command rather than reimplementing the
 prompt, so what gets scored is what ships. Cleanup is measured without audio on
 purpose: STT latency on a free tier varies by a factor of three between
 identical clips and would swamp the signal.
@@ -12,7 +12,7 @@ import argparse, json, pathlib, re, subprocess, sys, time
 from collections import defaultdict
 
 ROOT = pathlib.Path(__file__).resolve().parent.parent
-BIN = ROOT / "target" / "release" / "opendict"
+BIN = ROOT / "target" / "release" / "blurt"
 
 
 def load_cases(path):
@@ -108,7 +108,7 @@ def main():
     args = ap.parse_args()
 
     if not BIN.exists():
-        sys.exit(f"build the CLI first: cargo build --release -p opendict-cli")
+        sys.exit(f"build the CLI first: cargo build --release -p blurt-cli")
 
     cases = load_cases(args.cases)
     efforts = args.efforts.split(",")

@@ -169,6 +169,35 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "b588b76d00fde79687d7646a9b5bdf3cc0f655e0bbd080335a95d7e96f3587da"
 
 [[package]]
+name = "blurt-cli"
+version = "0.0.1"
+dependencies = [
+ "anyhow",
+ "blurt-core",
+ "clap",
+ "dotenvy",
+ "serde_json",
+ "tokio",
+]
+
+[[package]]
+name = "blurt-core"
+version = "0.0.1"
+dependencies = [
+ "anyhow",
+ "async-trait",
+ "reqwest",
+ "rusqlite",
+ "rustls",
+ "serde",
+ "serde_json",
+ "thiserror 2.0.20",
+ "tokio",
+ "tracing",
+ "uniffi",
+]
+
+[[package]]
 name = "bumpalo"
 version = "3.20.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -930,35 +959,6 @@ name = "once_cell_polyfill"
 version = "1.70.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "384b8ab6d37215f3c5301a95a4accb5d64aa607f1fcb26a11b5303878451b4fe"
-
-[[package]]
-name = "opendict-cli"
-version = "0.0.1"
-dependencies = [
- "anyhow",
- "clap",
- "dotenvy",
- "opendict-core",
- "serde_json",
- "tokio",
-]
-
-[[package]]
-name = "opendict-core"
-version = "0.0.1"
-dependencies = [
- "anyhow",
- "async-trait",
- "reqwest",
- "rusqlite",
- "rustls",
- "serde",
- "serde_json",
- "thiserror 2.0.20",
- "tokio",
- "tracing",
- "uniffi",
-]
 
 [[package]]
 name = "openssl-probe"

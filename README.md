@@ -1,4 +1,4 @@
-# OpenDict
+# Blurt
 
 Open-source, bring-your-own-key AI dictation. Hold a hotkey, speak, and get clean,
 formatted text in whatever app you're in — on macOS, Windows, and iOS.
@@ -11,7 +11,7 @@ dogfoodable macOS menu bar app all build and run. See [`docs/PLAN.md`](docs/PLAN
 Wispr Flow and superwhisper are excellent and closed. [freeflow](https://github.com/zachlatta/freeflow)
 is open but macOS-only, single-target, and hardwired around one shape of pipeline.
 
-OpenDict aims at three things none of them do together:
+Blurt aims at three things none of them do together:
 
 1. **Any key, any model.** Transcription and cleanup are both pluggable — Groq, OpenAI,
    Deepgram, ElevenLabs, Qwen, or any OpenAI-compatible endpoint including your own
@@ -31,24 +31,24 @@ cp .env.example .env      # then put your key in it
 $EDITOR .env
 
 # Run the pipeline from the terminal — this is the production code path.
-cargo run -p opendict-cli -- transcribe recording.wav
+cargo run -p blurt-cli -- transcribe recording.wav
 
 # Point either stage anywhere, including your own box.
-cargo run -p opendict-cli -- transcribe recording.wav \
+cargo run -p blurt-cli -- transcribe recording.wav \
   --stt-provider vllm --stt-model openai/whisper-large-v3 \
   --llm-provider ollama --llm-model qwen3:4b
 
 # Skip the LLM stage entirely for the lowest-latency path.
-cargo run -p opendict-cli -- transcribe recording.wav --mode raw
+cargo run -p blurt-cli -- transcribe recording.wav --mode raw
 
 # Simulate what the desktop shell will pass in.
-cargo run -p opendict-cli -- transcribe recording.wav \
+cargo run -p blurt-cli -- transcribe recording.wav \
   --app com.tinyspeck.slackmacgap \
   --context "Shipping the Parakeet migration this week." \
   --vocab "Parakeet,WhisperKit,n8" --json
 
-cargo run -p opendict-cli -- providers      # endpoints + which keys were found
-cargo run -p opendict-cli -- check groq     # verify a key actually works
+cargo run -p blurt-cli -- providers      # endpoints + which keys were found
+cargo run -p blurt-cli -- check groq     # verify a key actually works
 ```
 
 `.env` is read from the repo root (searching upward, so it works from any
@@ -64,7 +64,7 @@ Input must be 16-bit PCM WAV. Convert anything else with
 ## The macOS app
 
 ```bash
-./scripts/build-macos-app.sh --run         # -> build/OpenDict.app, then launches it
+./scripts/build-macos-app.sh --run         # -> build/Blurt.app, then launches it
 ```
 
 First run asks for **Microphone** and **Accessibility**. Accessibility is
@@ -85,7 +85,7 @@ app: it removes exactly the inserted text when it can still see it, falls back
 to ⌘Z, and refuses outright once you have switched apps. History is off for the
 Private preset and can be switched off per mode or entirely.
 
-**Pick your microphone in Settings → General.** OpenDict follows the system
+**Pick your microphone in Settings → General.** Blurt follows the system
 default input unless you pin one, and the system default is a shared setting
 other things move — connecting Bluetooth earbuds hands dictation to their
 hands-free mic, which is narrowband and noise-gated, and transcripts come back
@@ -95,27 +95,27 @@ the menu, and in the log, and a Bluetooth one is flagged.
 
 If the hotkey does nothing at all, check whether another app binds the same key.
 A global event tap that *consumes* the key press sits upstream of the monitor
-OpenDict listens on, so the press never arrives — and because the permission and
+Blurt listens on, so the press never arrives — and because the permission and
 the monitor are both fine, nothing anywhere reports a problem. `~/Library/Logs/
-OpenDict.log` records every arriving press, so an empty log during a press is
-the signature of this. Settings → Gestures moves OpenDict to a different key.
+Blurt.log` records every arriving press, so an empty log during a press is
+the signature of this. Settings → Gestures moves Blurt to a different key.
 
 Rebuilds are ad-hoc signed, and macOS ties permission grants to the signature, so
-each rebuild is treated as a new app. Set `OPENDICT_SIGN_IDENTITY` to a stable
+each rebuild is treated as a new app. Set `BLURT_SIGN_IDENTITY` to a stable
 Developer ID to keep your grants across builds.
 
 ## Building the Apple framework
 
 ```bash
-./scripts/build-xcframework.sh --release   # -> build/OpenDictCore.xcframework
+./scripts/build-xcframework.sh --release   # -> build/BlurtCore.xcframework
 ./scripts/swift-smoke.sh release           # exercises the FFI boundary for real
 ```
 
 ## Layout
 
 ```
-crates/opendict-core/   the portable pipeline — no UI, no OS assumptions
-crates/opendict-cli/    `opendict`, the terminal driver the eval harness uses
+crates/blurt-core/   the portable pipeline — no UI, no OS assumptions
+crates/blurt-cli/    `blurt`, the terminal driver the eval harness uses
 apps/macos/             menu bar app — hotkey, capture, AX context, insertion, history UI
 swift/SmokeTest/        proves the Rust <-> Swift boundary works
 scripts/                xcframework build, smoke test

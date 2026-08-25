@@ -4,14 +4,14 @@ bindings/
 build/
 .DS_Store
 *.wav
-!crates/opendict-core/tests/fixtures/*.wav
+!crates/blurt-core/tests/fixtures/*.wav
 .env
 .env.*
 !.env.example
 
 # macOS app build outputs (staged copies of the Rust core)
 apps/macos/Frameworks/
-apps/macos/Sources/OpenDictCore/opendict_core.swift
+apps/macos/Sources/BlurtCore/blurt_core.swift
 apps/macos/.build/
 
 # Eval run artifacts (regenerate with eval/run.py)

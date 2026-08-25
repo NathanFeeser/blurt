@@ -6,11 +6,11 @@ cd "$(dirname "$0")/.."
 ROOT="$PWD"
 PROFILE="${1:-debug}"
 
-BINDINGS="$ROOT/build/Sources/opendict_core.swift"
+BINDINGS="$ROOT/build/Sources/blurt_core.swift"
 HEADERS="$ROOT/build/Headers"
 LIBDIR="$ROOT/target/aarch64-apple-darwin/$PROFILE"
 
-for path in "$BINDINGS" "$HEADERS/module.modulemap" "$LIBDIR/libopendict_core.a"; do
+for path in "$BINDINGS" "$HEADERS/module.modulemap" "$LIBDIR/libblurt_core.a"; do
   if [[ ! -e "$path" ]]; then
     echo "missing $path — run ./scripts/build-xcframework.sh first" >&2
     exit 1
@@ -18,7 +18,7 @@ for path in "$BINDINGS" "$HEADERS/module.modulemap" "$LIBDIR/libopendict_core.a"
 done
 
 OUT="$ROOT/build/smoketest"
-# Link the .a by full path, not -lopendict_core: the target dir also contains a
+# Link the .a by full path, not -lblurt_core: the target dir also contains a
 # .dylib and the linker prefers it, which would silently test a different
 # artifact from the one the xcframework ships.
 echo "==> Compiling smoke test"
@@ -27,7 +27,7 @@ swiftc -O \
   "$BINDINGS" \
   "$ROOT/swift/SmokeTest/main.swift" \
   -I "$HEADERS" \
-  "$LIBDIR/libopendict_core.a" \
+  "$LIBDIR/libblurt_core.a" \
   -framework Security \
   -framework CoreFoundation \
   -framework SystemConfiguration \
