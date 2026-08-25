@@ -36,8 +36,14 @@ jobs:
         run: ./scripts/build-xcframework.sh
       - name: Run Swift smoke test
         run: ./scripts/swift-smoke.sh
-      - name: Run macOS app tests
-        run: swift test --package-path apps/macos
+      # Build the app exactly the way a developer does, rather than calling
+      # `swift test` directly. That script is what copies the freshly built
+      # xcframework and generated bindings into the Swift package; without it
+      # the package points at a binary target that is not there, which is how
+      # this job broke the day the app tests were added. "CI runs what you run"
+      # is also the only version of this that stays true as the layout moves.
+      - name: Build the macOS app and run its tests
+        run: ./scripts/build-macos-app.sh
       - uses: actions/upload-artifact@v4
         with:
           name: BlurtCore.xcframework
