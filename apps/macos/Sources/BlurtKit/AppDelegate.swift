@@ -56,6 +56,9 @@ public final class AppDelegate: NSObject, NSApplicationDelegate {
     public func applicationDidFinishLaunching(_ notification: Notification) {
         Diag.log("applicationDidFinishLaunching")
         Settings.registerDefaults()
+        // Before anything can open a window: without this the settings window's
+        // text fields ignore ⌘V. See MainMenu.
+        MainMenu.install(on: NSApp)
         NotificationCenter.default.addObserver(
             forName: .blurtHotkeysChanged, object: nil, queue: .main
         ) { [weak self] _ in
