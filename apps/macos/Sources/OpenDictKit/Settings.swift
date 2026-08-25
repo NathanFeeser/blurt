@@ -22,6 +22,8 @@ enum Settings {
         static let vocabulary = "vocabulary"
         static let localModelVariant = "localModelVariant"
         static let activeModeId = "activeModeId"
+        static let historyEnabled = "historyEnabled"
+        static let historyLimit = "historyLimit"
         static let baseUrlPrefix = "baseUrl."
     }
 
@@ -47,6 +49,11 @@ enum Settings {
             Key.readScreenContext: true,
             Key.vocabulary: "",
             Key.activeModeId: "default",
+            Key.historyEnabled: true,
+            // A thousand dictations is months of heavy use and a few megabytes
+            // of text. Large enough that history is worth searching, small
+            // enough that nothing accumulates forever unnoticed.
+            Key.historyLimit: 1000,
         ])
     }
 
@@ -135,6 +142,21 @@ enum Settings {
     static var activeModeId: String {
         get { d.string(forKey: Key.activeModeId) ?? "default" }
         set { d.set(newValue, forKey: Key.activeModeId) }
+    }
+
+    /// Whether finished dictations are written to the local history database.
+    ///
+    /// A master switch above the per-mode `recordHistory` flag: off here means
+    /// the core is never given a store to write to at all.
+    static var historyEnabled: Bool {
+        get { d.bool(forKey: Key.historyEnabled) }
+        set { d.set(newValue, forKey: Key.historyEnabled) }
+    }
+
+    /// How many entries to keep. Enforced by the core on every write.
+    static var historyLimit: Int {
+        get { max(1, d.integer(forKey: Key.historyLimit)) }
+        set { d.set(max(1, newValue), forKey: Key.historyLimit) }
     }
 
     /// Optional custom endpoint per provider. Empty means "use the built-in

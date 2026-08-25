@@ -25,6 +25,12 @@ pub struct Timings {
 
 #[derive(Debug, Clone, uniffi::Record)]
 pub struct DictationResult {
+    /// Row id in local history, when the engine wrote one.
+    ///
+    /// Carried on the result rather than fetched afterwards so the shell can
+    /// annotate the exact entry — asking the store for "the last row" races two
+    /// dictations finishing close together, which hands-free mode makes easy.
+    pub entry_id: Option<i64>,
     /// Which mode produced this. Reported by the core rather than inferred by
     /// the shell: a UI that recomputes app-matching itself can disagree with
     /// what actually ran, which is worse than showing nothing.
@@ -101,6 +107,7 @@ pub async fn run_dictation(
     // Whisper failure mode.
     if raw_text.trim().is_empty() {
         return Ok(DictationResult {
+            entry_id: None,
             mode_id: mode.id.clone(),
             mode_name: mode.name.clone(),
             raw_text,
@@ -124,6 +131,7 @@ pub async fn run_dictation(
         (cleaned.text, cleaned.ran, cleaned.error, cleaned.elapsed_ms);
 
     Ok(DictationResult {
+        entry_id: None,
         mode_id: mode.id.clone(),
         mode_name: mode.name.clone(),
         raw_text,
@@ -250,6 +258,7 @@ pub async fn run_command(
     let cleanup_ms = t.elapsed().as_millis() as u64;
 
     Ok(DictationResult {
+        entry_id: None,
         mode_id: mode.id.clone(),
         mode_name: mode.name.clone(),
         raw_text: transcript.text,
@@ -509,6 +518,7 @@ mod tests {
     #[test]
     fn rtf_is_zero_for_empty_audio() {
         let r = DictationResult {
+            entry_id: None,
             mode_id: "t".into(),
             mode_name: "T".into(),
             raw_text: String::new(),

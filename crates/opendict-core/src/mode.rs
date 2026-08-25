@@ -43,6 +43,19 @@ pub struct Mode {
     /// Off by default: the skip gate is a latency optimization users can disable
     /// if they don't trust it.
     pub allow_cleanup_skip: bool,
+    /// Whether finished dictations in this mode are written to local history.
+    ///
+    /// Per-mode rather than global because the decision is contextual: a Private
+    /// mode running on-device should leave nothing on disk, while the mode you
+    /// write Slack messages in benefits from being searchable. Defaults to true,
+    /// including for modes stored before this field existed.
+    #[serde(default = "yes")]
+    pub record_history: bool,
+}
+
+/// `#[serde(default)]` on a bool means `false`; history defaults to on.
+fn yes() -> bool {
+    true
 }
 
 impl Mode {
@@ -72,6 +85,7 @@ impl Mode {
             cleanup_instructions: None,
             app_matches: vec![],
             allow_cleanup_skip: true,
+            record_history: true,
         }
     }
 
@@ -89,6 +103,7 @@ impl Mode {
             cleanup_instructions: None,
             app_matches: vec![],
             allow_cleanup_skip: true,
+            record_history: true,
         }
     }
 
@@ -130,6 +145,7 @@ impl Mode {
                     "telegram".into(),
                 ],
                 allow_cleanup_skip: true,
+                record_history: true,
             },
             Mode {
                 id: "email".into(),
@@ -149,6 +165,7 @@ impl Mode {
                     "sparkmail".into(),
                 ],
                 allow_cleanup_skip: true,
+                record_history: true,
             },
             Mode {
                 id: "code".into(),
@@ -173,6 +190,7 @@ impl Mode {
                     "jetbrains".into(),
                 ],
                 allow_cleanup_skip: true,
+                record_history: true,
             },
         ]
     }
@@ -193,6 +211,9 @@ impl Mode {
             cleanup_instructions: None,
             app_matches: vec![],
             allow_cleanup_skip: true,
+            // A mode whose entire purpose is that nothing leaves the machine
+            // should not leave a transcript of it on the disk either.
+            record_history: false,
         }
     }
 

@@ -176,6 +176,38 @@ filler removal · punctuation and capitalization · self-corrections ("Tuesday, 
 proper-noun spelling from context · tone matching per app · code-awareness in editors ·
 leaving already-correct text alone (the most common failure mode is over-editing).
 
+## History
+
+Implemented 2026-08-25. `crates/opendict-core/src/history.rs` — SQLite in the core rather
+than one store per shell, so there is a single schema and a history file written on a Mac
+reads on Windows. The core writes the row itself at the end of `transcribe`/`run_command` and
+returns its id on `DictationResult`; the shell annotates it afterwards with the insertion
+method, which only the shell can know.
+
+**Text only. No audio is written to disk, ever.** That is what makes the privacy sentence
+short enough to say to someone who is about to grant accessibility access, and it is the
+reason "re-run" means re-running *cleanup* over the stored transcript rather than
+re-transcribing. Trying a different prompt on what you actually said is the useful half:
+it is how a user decides whether a mode is worth switching to.
+
+Three controls, because this is a plaintext record of everything the user dictates:
+
+| Control | Where |
+|---|---|
+| Master switch | Settings → History. Off closes the store, so the core has nowhere to write. |
+| Per-mode `record_history` | Mode editor. Off for the Private preset — a mode whose point is that nothing leaves the machine should not leave a transcript of it either. |
+| Retention cap | Enforced on every write, so the file cannot grow unwatched. `clear` also `VACUUM`s: deleted text that stays recoverable in free pages is not what "clear my history" means. |
+
+The `edited_text` column is written by nothing today. It is the `(final text → what the user
+actually kept)` correction pair that Phase 6 trains on, and adding it later would mean
+migrating everyone's history.
+
+Undo lives in the shell (`TextInserter.undoPlan`) because it is entirely platform-specific.
+The rule: remove exactly the inserted text when the focused field still ends with it; fall
+back to ⌘Z when the field cannot be read; refuse once the frontmost app has changed. That
+last case is the one that matters — a ⌘Z sent into the wrong window destroys work the user
+did themselves, so it is a pure function with tests rather than a judgement made inline.
+
 ## Evaluation: `DictBench`
 
 Nobody has a good public benchmark for *dictation* as opposed to *transcription*. WER over
@@ -201,7 +233,7 @@ alone" from 94% to 81% should fail the build.
 
 - Keys in the OS keychain (Keychain Services / Windows Credential Manager). Never in
   `UserDefaults`, never in plaintext config, never logged.
-- Audio is held in memory, written to disk only if the user enables history retention.
+- Audio is held in memory and never written to disk. History keeps text only — see above.
 - **Zero telemetry by default.** Opt-in, granular, and the payload is inspectable in the UI.
 - The data flywheel — donating (audio, raw ASR, final text after user edits) — is strictly
   opt-in with a visible indicator, because those user edits are exactly the gold labels a

@@ -72,10 +72,18 @@ non-negotiable: without it the hotkey installs successfully and then silently
 never fires. Then use the menu bar icon to set your API key (stored in the login
 keychain), and **hold Right Option** to dictate. Escape while holding cancels.
 
-The microphone runs continuously so the pre-roll buffer can catch words spoken a
-beat before the key registers — which means the orange mic indicator stays on
-while the app runs. "Pause Microphone" in the menu turns it off at the cost of
-pre-roll.
+The microphone opens when you press the hotkey and closes when you release it,
+so the orange mic indicator is lit only while you are actually dictating.
+Measured engine start is ~90 ms, which is why a permanently-open mic was not
+worth the "is this thing always listening?" question it invites.
+
+Everything you dictate is kept in a local history — text only, never audio —
+searchable from **Settings → History**, with the last few in the menu bar. Any
+entry can be re-run through a different mode's cleanup to see what it would have
+written. **Undo Last Insertion** takes back what was just typed into another
+app: it removes exactly the inserted text when it can still see it, falls back
+to ⌘Z, and refuses outright once you have switched apps. History is off for the
+Private preset and can be switched off per mode or entirely.
 
 Rebuilds are ad-hoc signed, and macOS ties permission grants to the signature, so
 each rebuild is treated as a new app. Set `OPENDICT_SIGN_IDENTITY` to a stable
@@ -93,7 +101,7 @@ Developer ID to keep your grants across builds.
 ```
 crates/opendict-core/   the portable pipeline — no UI, no OS assumptions
 crates/opendict-cli/    `opendict`, the terminal driver the eval harness uses
-apps/macos/             menu bar app — hotkey, capture, AX context, insertion
+apps/macos/             menu bar app — hotkey, capture, AX context, insertion, history UI
 swift/SmokeTest/        proves the Rust <-> Swift boundary works
 scripts/                xcframework build, smoke test
 docs/                   plan, architecture, research

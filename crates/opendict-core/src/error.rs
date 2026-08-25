@@ -35,6 +35,11 @@ pub enum DictError {
 
     #[error("unknown provider id {id:?}")]
     UnknownProvider { id: String },
+
+    /// Local persistence failed. Never fatal to a dictation: the text is
+    /// already on its way into the user's app by the time history is written.
+    #[error("history storage error: {detail}")]
+    Storage { detail: String },
 }
 
 pub type Result<T> = std::result::Result<T, DictError>;

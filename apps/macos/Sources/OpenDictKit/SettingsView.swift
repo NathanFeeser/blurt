@@ -1,22 +1,45 @@
 import OpenDictCore
 import SwiftUI
 
+enum SettingsTab: Hashable {
+    case general
+    case modes
+    case history
+    case providers
+    case gestures
+}
+
+/// Which tab the settings window is showing, owned by the window so a menu item
+/// can change it on a window that is already open.
+@MainActor
+final class SettingsNavigation: ObservableObject {
+    @Published var tab: SettingsTab = .general
+}
+
 struct SettingsView: View {
     @ObservedObject var model: AppModel
+    @ObservedObject var navigation: SettingsNavigation
 
     var body: some View {
         // General first, and it answers the whole setup question on one screen.
         // Modes are powerful but advanced; leading with them turned basic setup
         // into a hunt across several tabs.
-        TabView {
+        TabView(selection: $navigation.tab) {
             GeneralTab(model: model)
                 .tabItem { Label("General", systemImage: "gearshape") }
+                .tag(SettingsTab.general)
             ModesTab(model: model)
                 .tabItem { Label("Modes", systemImage: "square.stack.3d.up") }
+                .tag(SettingsTab.modes)
+            HistoryTab(model: model)
+                .tabItem { Label("History", systemImage: "clock.arrow.circlepath") }
+                .tag(SettingsTab.history)
             ProvidersTab(model: model)
                 .tabItem { Label("Providers", systemImage: "key") }
+                .tag(SettingsTab.providers)
             GesturesTab()
                 .tabItem { Label("Gestures", systemImage: "hand.tap") }
+                .tag(SettingsTab.gestures)
         }
         .frame(width: 720, height: 520)
     }
@@ -420,6 +443,13 @@ struct ModeEditor: View {
                         )
                     )
                     .disabled(model.activeModeId == mode.id)
+
+                    Toggle("Keep dictations from this mode in History", isOn: $mode.recordHistory)
+                    Text(
+                        "Off means nothing spoken in this mode is written to disk. The Private "
+                            + "preset ships with it off."
+                    )
+                    .font(.caption).foregroundStyle(.secondary)
                 }
 
                 Divider()

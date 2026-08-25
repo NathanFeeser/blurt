@@ -4,13 +4,16 @@ import Testing
 
 @testable import OpenDictKit
 
-/// Isolated defaults so tests never touch the user's real preferences.
+/// Isolated defaults and an isolated history file, so tests never touch the
+/// user's real preferences or the dictations they are actually keeping.
 @MainActor
-private func makeModel(_ name: String = UUID().uuidString) -> AppModel {
+func makeModel(_ name: String = UUID().uuidString) -> AppModel {
     let suite = UserDefaults(suiteName: "opendict.tests.\(name)")!
     suite.removePersistentDomain(forName: "opendict.tests.\(name)")
     Settings.defaults = suite
     Settings.registerDefaults()
+    AppModel.historyURL = URL(fileURLWithPath: NSTemporaryDirectory())
+        .appendingPathComponent("opendict-tests/\(name)/history.sqlite3")
     return AppModel(engine: DictationEngine())
 }
 

@@ -13,6 +13,9 @@ public final class AppDelegate: NSObject, NSApplicationDelegate {
 
     private var statusItem: NSStatusItem!
     private var lastResult: DictationResult?
+    /// What was last put into another app, so it can be taken back out.
+    /// Cleared once undone — undoing twice would eat text we never wrote.
+    private var lastInsertion: TextInserter.Insertion?
     private var isBusy = false
     private var handsFreeCap: DispatchWorkItem?
     /// The selection captured when command mode started. Held because the user
@@ -348,6 +351,18 @@ public final class AppDelegate: NSObject, NSApplicationDelegate {
             result.finalText,
             preferAccessibility: Settings.preferAccessibilityInsert
         )
+        lastInsertion = TextInserter.Insertion(
+            text: result.finalText,
+            bundleId: lastForegroundBundleId,
+            at: Date(),
+            entryId: result.entryId
+        )
+        // Which strategy landed is only knowable here, and it is the first thing
+        // worth looking at when someone reports text going into the wrong place.
+        if let entryId = result.entryId {
+            try? engine.historyNoteInsertion(id: entryId, method: method.rawValue)
+            model.noteHistoryChanged()
+        }
         Diag.log(
             "mode \(result.modeName) (\(result.modeId)) via "
                 + "\(result.sttProvider)/\(result.sttModel) | "
@@ -473,6 +488,35 @@ public final class AppDelegate: NSObject, NSApplicationDelegate {
             menu.addItem(timing)
         }
 
+        if let insertion = lastInsertion {
+            let item = NSMenuItem(
+                title: "Undo \"\(String(insertion.text.prefix(32)))…\"",
+                action: #selector(undoLastInsertion), keyEquivalent: "")
+            item.target = self
+            menu.addItem(item)
+        }
+
+        let recent = model.historyEnabled ? model.historyRecent(limit: 5) : []
+        if !recent.isEmpty {
+            let historyMenu = NSMenu()
+            for entry in recent {
+                let item = NSMenuItem(
+                    title: Self.menuPreview(entry.finalText),
+                    action: #selector(copyHistoryEntry(_:)), keyEquivalent: "")
+                item.target = self
+                item.representedObject = entry.finalText
+                historyMenu.addItem(item)
+            }
+            historyMenu.addItem(.separator())
+            let all = NSMenuItem(title: "Show All…", action: #selector(openHistory), keyEquivalent: "")
+            all.target = self
+            historyMenu.addItem(all)
+
+            let historyItem = NSMenuItem(title: "Recent", action: nil, keyEquivalent: "")
+            historyItem.submenu = historyMenu
+            menu.addItem(historyItem)
+        }
+
         menu.addItem(.separator())
         add(menu, "Settings…", #selector(openSettings))
         add(menu, "Open Log", #selector(openLog))
@@ -499,6 +543,51 @@ public final class AppDelegate: NSObject, NSApplicationDelegate {
         guard let text = lastResult?.finalText else { return }
         NSPasteboard.general.clearContents()
         NSPasteboard.general.setString(text, forType: .string)
+    }
+
+    /// One line of a menu item: newlines would otherwise render as spaces and
+    /// make a multi-paragraph dictation an unreadably long row.
+    static func menuPreview(_ text: String, limit: Int = 48) -> String {
+        let flattened = text
+            .replacingOccurrences(of: "\n", with: " ")
+            .replacingOccurrences(of: "\r", with: " ")
+            .split(separator: " ")
+            .joined(separator: " ")
+            .trimmingCharacters(in: .whitespaces)
+        return flattened.count <= limit
+            ? flattened
+            : String(flattened.prefix(limit)).trimmingCharacters(in: .whitespaces) + "…"
+    }
+
+    @objc private func undoLastInsertion() {
+        guard let insertion = lastInsertion else { return }
+        // Let the menu finish closing and focus return to the app we typed
+        // into. Acting immediately would aim the keystroke at a closing menu.
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) { [weak self] in
+            guard let self else { return }
+            let outcome = TextInserter.undo(
+                insertion, frontmostBundleId: self.lastForegroundBundleId)
+            switch outcome {
+            case .removed, .sentUndoKeystroke:
+                // Success is visible on screen; saying so would be noise.
+                self.lastInsertion = nil
+                Diag.log("undo: \(outcome)")
+            case .refused(let why):
+                Diag.log("undo refused: \(why)")
+                self.overlay.flashError(why)
+            }
+            self.refreshMenu()
+        }
+    }
+
+    @objc private func copyHistoryEntry(_ sender: NSMenuItem) {
+        guard let text = sender.representedObject as? String else { return }
+        NSPasteboard.general.clearContents()
+        NSPasteboard.general.setString(text, forType: .string)
+    }
+
+    @objc private func openHistory() {
+        settingsWindow.show(tab: .history)
     }
 
     @objc private func openSettings() {

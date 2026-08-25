@@ -29,6 +29,10 @@ final class AppModel: ObservableObject {
     }
     /// Bumped whenever a key changes, so views showing key state refresh.
     @Published private(set) var credentialsRevision = 0
+    /// Bumped whenever history changes, so open views reload. History lives in
+    /// SQLite rather than in a `@Published` array — it outlives the process and
+    /// can be thousands of rows, neither of which suits keeping it in memory.
+    @Published private(set) var historyRevision = 0
 
     @Published private(set) var localState: WhisperKitTranscriber.State = .idle
     private var localTranscriber: WhisperKitTranscriber?
@@ -39,6 +43,7 @@ final class AppModel: ObservableObject {
         self.vocabulary = Settings.vocabularyTerms
         self.activeModeId = Settings.activeModeId
         apply()
+        openHistoryIfEnabled()
 
         // Restore the on-device model if one was chosen. Loading is async and
         // non-blocking; until it finishes, on-device modes report that the model
@@ -46,6 +51,102 @@ final class AppModel: ObservableObject {
         if let variant = Settings.localModelVariant {
             enableLocalModel(variant: variant)
         }
+    }
+
+    // MARK: - History
+
+    /// Where the history database lives. Application Support, not Documents:
+    /// this is app state the user did not create as a file, and it should not
+    /// show up in their documents folder.
+    ///
+    /// Swappable for the same reason `Settings.defaults` is — a test that builds
+    /// an `AppModel` must not write into the real history the user is keeping.
+    nonisolated(unsafe) static var historyURL: URL = defaultHistoryURL()
+
+    nonisolated static func defaultHistoryURL() -> URL {
+        let base = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)
+            .first ?? URL(fileURLWithPath: NSTemporaryDirectory())
+        return base.appendingPathComponent("OpenDict/history.sqlite3")
+    }
+
+    var historyEnabled: Bool {
+        get { Settings.historyEnabled }
+        set {
+            Settings.historyEnabled = newValue
+            openHistoryIfEnabled()
+            historyRevision += 1
+        }
+    }
+
+    var historyLimit: Int {
+        get { Settings.historyLimit }
+        set {
+            Settings.historyLimit = newValue
+            // The cap is applied by the core on write, so it has to be reopened
+            // for a new value to take effect.
+            openHistoryIfEnabled()
+        }
+    }
+
+    /// Open the store, or close it if history is switched off.
+    ///
+    /// Switching off does not delete anything — that is `clearHistory()`, which
+    /// is a different question and deserves its own deliberate answer.
+    private func openHistoryIfEnabled() {
+        guard Settings.historyEnabled else {
+            engine.closeHistory()
+            return
+        }
+        do {
+            try engine.openHistory(
+                path: Self.historyURL.path, limit: UInt32(Settings.historyLimit))
+        } catch {
+            // Dictation still works without history; a broken database is not a
+            // reason to refuse to transcribe.
+            Diag.log("could not open history, continuing without it: \(error)")
+        }
+    }
+
+    func historyRecent(limit: Int = 200) -> [HistoryEntry] {
+        (try? engine.historyRecent(limit: UInt32(limit))) ?? []
+    }
+
+    func historySearch(_ query: String, limit: Int = 200) -> [HistoryEntry] {
+        (try? engine.historySearch(query: query, limit: UInt32(limit))) ?? []
+    }
+
+    func deleteHistoryEntry(_ id: Int64) {
+        try? engine.historyDelete(id: id)
+        historyRevision += 1
+    }
+
+    /// Delete every entry, whether or not recording is currently on.
+    ///
+    /// Switching history off closes the store, so this has to reopen it to have
+    /// anything to delete — otherwise "clear my history" would appear to work
+    /// while leaving every past dictation on disk, which is the worst possible
+    /// outcome for a privacy control.
+    func clearHistory() {
+        let wasOpen = engine.historyIsOpen()
+        if !wasOpen {
+            try? engine.openHistory(
+                path: Self.historyURL.path, limit: UInt32(Settings.historyLimit))
+        }
+        try? engine.historyClear()
+        if !wasOpen {
+            engine.closeHistory()
+        }
+        historyRevision += 1
+    }
+
+    func noteHistoryChanged() {
+        historyRevision += 1
+    }
+
+    /// Re-run cleanup over a stored transcript with a different mode. The stored
+    /// entry is not modified — this answers "what would this mode have done?"
+    func rerun(entryId: Int64, modeId: String) async throws -> DictationResult {
+        try await engine.rerunCleanup(entryId: entryId, modeId: modeId)
     }
 
     // MARK: - On-device transcription

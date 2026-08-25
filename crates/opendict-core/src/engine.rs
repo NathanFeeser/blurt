@@ -11,6 +11,7 @@ use std::time::Duration;
 
 use crate::context::AppContext;
 use crate::error::{DictError, Result};
+use crate::history::{should_record, EntryKind, History, HistoryEntry};
 use crate::mode::{resolve_mode, Mode};
 use crate::pipeline::{self, DictationResult, Stages};
 use crate::providers::{
@@ -49,6 +50,9 @@ struct EngineState {
     vocabulary: Vocabulary,
     /// Supplied by the shell when on-device transcription is available.
     local: Option<Arc<dyn LocalTranscriber>>,
+    /// `None` until a shell opens one. History is opt-in at the shell level and
+    /// per-mode below that; a core with no store simply records nothing.
+    history: Option<Arc<History>>,
 }
 
 #[uniffi::export(async_runtime = "tokio")]
@@ -78,6 +82,7 @@ impl DictationEngine {
                 modes: vec![default, Mode::raw()],
                 vocabulary: Vocabulary::default(),
                 local: None,
+                history: None,
             }),
             http,
         }
@@ -149,13 +154,152 @@ impl DictationEngine {
     /// otherwise the active mode is used.
     pub async fn transcribe(&self, samples: Vec<f32>, ctx: AppContext) -> Result<DictationResult> {
         let (mode, stages, vocab) = self.prepare(&ctx)?;
-        pipeline::run_dictation(&samples, &stages, &mode, &ctx, &vocab).await
+        let mut result = pipeline::run_dictation(&samples, &stages, &mode, &ctx, &vocab).await?;
+        result.entry_id = self.remember(&result, &ctx, &mode, EntryKind::Dictation);
+        Ok(result)
     }
 
     /// Command mode: apply a spoken instruction to `ctx.selected_text`.
     pub async fn run_command(&self, samples: Vec<f32>, ctx: AppContext) -> Result<DictationResult> {
         let (mode, stages, vocab) = self.prepare(&ctx)?;
-        pipeline::run_command(&samples, &stages, &mode, &ctx, &vocab).await
+        let mut result = pipeline::run_command(&samples, &stages, &mode, &ctx, &vocab).await?;
+        result.entry_id = self.remember(&result, &ctx, &mode, EntryKind::Command);
+        Ok(result)
+    }
+
+    // MARK: history
+    //
+    // Recording happens here rather than in each shell so that iOS and Windows
+    // get it by existing, and so there is exactly one place that decides whether
+    // a dictation is written down.
+
+    /// Open (creating if needed) the history database at `path`.
+    ///
+    /// The shell picks the location because only it knows what its platform
+    /// considers user data. Nothing is recorded until this is called.
+    pub fn open_history(&self, path: String, limit: u32) -> Result<()> {
+        let history = History::open(&path, limit)?;
+        self.inner.lock().unwrap().history = Some(Arc::new(history));
+        Ok(())
+    }
+
+    /// Stop recording. Existing entries are left alone — use `history_clear`
+    /// to delete them, which is a different question the user answers.
+    pub fn close_history(&self) {
+        self.inner.lock().unwrap().history = None;
+    }
+
+    pub fn history_is_open(&self) -> bool {
+        self.inner.lock().unwrap().history.is_some()
+    }
+
+    pub fn history_recent(&self, limit: u32) -> Result<Vec<HistoryEntry>> {
+        match self.history() {
+            Some(h) => h.recent(limit),
+            None => Ok(vec![]),
+        }
+    }
+
+    pub fn history_search(&self, query: String, limit: u32) -> Result<Vec<HistoryEntry>> {
+        match self.history() {
+            Some(h) => h.search(&query, limit),
+            None => Ok(vec![]),
+        }
+    }
+
+    pub fn history_entry(&self, id: i64) -> Result<Option<HistoryEntry>> {
+        match self.history() {
+            Some(h) => h.get(id),
+            None => Ok(None),
+        }
+    }
+
+    pub fn history_count(&self) -> Result<u32> {
+        match self.history() {
+            Some(h) => h.count(),
+            None => Ok(0),
+        }
+    }
+
+    /// Record which insertion strategy landed. Only the shell knows.
+    pub fn history_note_insertion(&self, id: i64, method: String) -> Result<()> {
+        match self.history() {
+            Some(h) => h.note_insertion(id, &method),
+            None => Ok(()),
+        }
+    }
+
+    /// Record what the user turned the inserted text into — the correction pair
+    /// PLAN.md Phase 6 trains on.
+    pub fn history_record_edit(&self, id: i64, edited: String) -> Result<()> {
+        match self.history() {
+            Some(h) => h.record_edit(id, &edited),
+            None => Ok(()),
+        }
+    }
+
+    pub fn history_delete(&self, id: i64) -> Result<()> {
+        match self.history() {
+            Some(h) => h.delete(id),
+            None => Ok(()),
+        }
+    }
+
+    /// Re-run the cleanup stage over a stored dictation's raw transcript, using
+    /// a mode of the caller's choosing.
+    ///
+    /// This is cleanup-only by construction: history keeps text, never audio, so
+    /// there is nothing to re-transcribe. Trying a different *prompt* on what
+    /// you actually said is the useful half anyway — and it is how a user can
+    /// tell whether a mode is worth switching to.
+    ///
+    /// The stored entry is left untouched. A re-run is an experiment, not a
+    /// correction of the record.
+    pub async fn rerun_cleanup(&self, entry_id: i64, mode_id: String) -> Result<DictationResult> {
+        let entry = self
+            .history_entry(entry_id)?
+            .ok_or_else(|| DictError::Storage {
+                detail: format!("no history entry {entry_id}"),
+            })?;
+
+        // The app it was dictated into is part of what cleanup conditions on, so
+        // a re-run has to reproduce that context or it is scoring a different
+        // prompt than the one that ran.
+        let ctx = AppContext {
+            bundle_id: entry.app_bundle_id.clone(),
+            app_name: entry.app_name.clone(),
+            window_title: None,
+            surrounding_text: None,
+            selected_text: None,
+        };
+        let (mode, stages, _) = self.prepare_with(&ctx, Some(&mode_id))?;
+        let cleaned = pipeline::clean_up(&entry.raw_text, &stages, &mode, &ctx).await;
+
+        Ok(DictationResult {
+            entry_id: Some(entry_id),
+            mode_id: mode.id.clone(),
+            mode_name: mode.name.clone(),
+            raw_text: entry.raw_text,
+            final_text: cleaned.text,
+            cleanup_ran: cleaned.ran,
+            cleanup_error: cleaned.error,
+            audio_duration_ms: entry.audio_duration_ms,
+            detected_language: None,
+            stt_provider: entry.stt_provider,
+            stt_model: entry.stt_model,
+            timings: crate::pipeline::Timings {
+                stt_ms: 0,
+                cleanup_ms: cleaned.elapsed_ms,
+                total_ms: cleaned.elapsed_ms,
+            },
+        })
+    }
+
+    pub fn history_clear(&self) -> Result<()> {
+        match self.history() {
+            Some(h) => h.clear(),
+            None => Ok(()),
+        }
     }
 
     /// Which mode would run for this context right now.
@@ -183,6 +327,7 @@ impl DictationEngine {
         let (mode, stages, _) = self.prepare(&ctx)?;
         let cleaned = pipeline::clean_up(&text, &stages, &mode, &ctx).await;
         Ok(DictationResult {
+            entry_id: None,
             mode_id: mode.id.clone(),
             mode_name: mode.name.clone(),
             raw_text: text,
@@ -227,14 +372,35 @@ impl DictationEngine {
     /// Resolve mode + providers for this dictation. Not exported: `Stages` holds
     /// trait objects that have no FFI representation.
     fn prepare(&self, ctx: &AppContext) -> Result<(Mode, Stages, Vocabulary)> {
+        self.prepare_with(ctx, None)
+    }
+
+    /// `forced_mode` bypasses app matching. Re-running a stored dictation is
+    /// the caller picking a mode by hand; resolving from the app it was
+    /// originally dictated into would silently ignore that choice.
+    fn prepare_with(
+        &self,
+        ctx: &AppContext,
+        forced_mode: Option<&str>,
+    ) -> Result<(Mode, Stages, Vocabulary)> {
         let inner = self.inner.lock().unwrap();
-        let active = inner
-            .modes
-            .iter()
-            .find(|m| m.id == inner.active_mode_id)
-            .cloned()
-            .unwrap_or_else(Mode::default_dictation);
-        let mode = resolve_mode(&inner.modes, &active, ctx.bundle_id.as_deref()).clone();
+        let mode = match forced_mode {
+            Some(id) => inner
+                .modes
+                .iter()
+                .find(|m| m.id == id)
+                .cloned()
+                .ok_or_else(|| DictError::UnknownProvider { id: id.to_string() })?,
+            None => {
+                let active = inner
+                    .modes
+                    .iter()
+                    .find(|m| m.id == inner.active_mode_id)
+                    .cloned()
+                    .unwrap_or_else(Mode::default_dictation);
+                resolve_mode(&inner.modes, &active, ctx.bundle_id.as_deref()).clone()
+            }
+        };
         let vocab = inner.vocabulary.clone();
         let credentials = inner.credentials.clone();
         let local = inner.local.clone();
@@ -252,6 +418,35 @@ impl DictationEngine {
         };
 
         Ok((mode, Stages { stt, cleanup }, vocab))
+    }
+
+    fn history(&self) -> Option<Arc<History>> {
+        self.inner.lock().unwrap().history.clone()
+    }
+
+    /// Write a finished dictation to history, if there is a store and the mode
+    /// allows it.
+    ///
+    /// Failures are swallowed on purpose. The text is already on its way into
+    /// the user's app by now; a full disk is not a reason to tell them their
+    /// dictation failed, and the error is visible in the log.
+    fn remember(
+        &self,
+        result: &DictationResult,
+        ctx: &AppContext,
+        mode: &Mode,
+        kind: EntryKind,
+    ) -> Option<i64> {
+        if !should_record(mode, result) {
+            return None;
+        }
+        match self.history()?.record(result, ctx, kind) {
+            Ok(id) => Some(id),
+            Err(e) => {
+                tracing::warn!("could not write history: {e}");
+                None
+            }
+        }
     }
 
     fn credentials_for(&self, provider_id: &str) -> Result<ProviderCredentials> {
@@ -436,6 +631,67 @@ mod tests {
         let before = engine.modes().len();
         engine.set_modes(vec![]);
         assert_eq!(engine.modes().len(), before);
+    }
+
+    #[test]
+    fn history_calls_are_harmless_before_a_shell_opens_a_store() {
+        // iOS and the CLI may never open one. Reading history then is an empty
+        // list, not an error the caller has to special-case.
+        let engine = DictationEngine::new();
+        assert!(!engine.history_is_open());
+        assert!(engine.history_recent(10).unwrap().is_empty());
+        assert!(engine
+            .history_search("anything".into(), 10)
+            .unwrap()
+            .is_empty());
+        assert_eq!(engine.history_count().unwrap(), 0);
+        assert!(engine.history_entry(1).unwrap().is_none());
+        assert!(engine.history_note_insertion(1, "paste".into()).is_ok());
+        assert!(engine.history_delete(1).is_ok());
+        assert!(engine.history_clear().is_ok());
+    }
+
+    #[test]
+    fn a_mode_that_opts_out_leaves_no_row_behind() {
+        let engine = DictationEngine::new();
+        engine.open_history(":memory:".into(), 100).unwrap();
+
+        let ctx = AppContext {
+            bundle_id: None,
+            app_name: None,
+            window_title: None,
+            surrounding_text: None,
+            selected_text: None,
+        };
+        let result = crate::pipeline::DictationResult {
+            entry_id: None,
+            mode_id: "private".into(),
+            mode_name: "Private (on-device)".into(),
+            raw_text: "something private".into(),
+            final_text: "something private".into(),
+            cleanup_ran: false,
+            cleanup_error: None,
+            audio_duration_ms: 1000,
+            detected_language: None,
+            stt_provider: "local".into(),
+            stt_model: "large-v3-turbo".into(),
+            timings: crate::pipeline::Timings::default(),
+        };
+
+        assert!(engine
+            .remember(&result, &ctx, &Mode::private(), EntryKind::Dictation)
+            .is_none());
+        assert_eq!(engine.history_count().unwrap(), 0);
+
+        assert!(engine
+            .remember(
+                &result,
+                &ctx,
+                &Mode::default_dictation(),
+                EntryKind::Dictation
+            )
+            .is_some());
+        assert_eq!(engine.history_count().unwrap(), 1);
     }
 
     #[test]

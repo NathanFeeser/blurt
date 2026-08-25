@@ -10,18 +10,25 @@ import SwiftUI
 final class SettingsWindow: NSObject, NSWindowDelegate {
     private var window: NSWindow?
     private let model: AppModel
+    /// Which tab is showing. Held out here rather than as view state because
+    /// the window is created once and reused: a menu item that opens History
+    /// has to be able to switch tabs on a window that already exists.
+    private let navigation = SettingsNavigation()
 
     init(model: AppModel) {
         self.model = model
     }
 
-    func show() {
+    func show(tab: SettingsTab = .general) {
+        navigation.tab = tab
+
         if let window {
             activate(window)
             return
         }
 
-        let hosting = NSHostingController(rootView: SettingsView(model: model))
+        let hosting = NSHostingController(
+            rootView: SettingsView(model: model, navigation: navigation))
         let window = NSWindow(contentViewController: hosting)
         window.title = "OpenDict Settings"
         window.styleMask = [.titled, .closable, .miniaturizable]
