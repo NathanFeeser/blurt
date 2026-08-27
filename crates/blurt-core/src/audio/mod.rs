@@ -5,9 +5,11 @@
 //! and encoding are implemented exactly once.
 
 mod ring;
+mod speech;
 mod wav;
 
 pub use ring::{AudioCapture, CaptureStats};
+pub use speech::{contains_speech, measure_speech, SpeechMeasurement};
 pub use wav::encode_wav_pcm16;
 
 /// Everything downstream assumes 16 kHz mono f32. Shells resample before pushing.
@@ -29,4 +31,15 @@ pub const PREROLL_MS: u32 = 250;
 #[uniffi::export]
 pub fn sample_rate() -> u32 {
     SAMPLE_RATE
+}
+
+/// Root-mean-square level of a block of samples, 0.0-1.0.
+///
+/// Shared so the level meter and the speech check are measuring the same thing.
+pub(crate) fn rms(frames: &[f32]) -> f32 {
+    if frames.is_empty() {
+        return 0.0;
+    }
+    let sum: f32 = frames.iter().map(|f| f * f).sum();
+    (sum / frames.len() as f32).sqrt().clamp(0.0, 1.0)
 }

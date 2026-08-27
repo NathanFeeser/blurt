@@ -99,6 +99,7 @@ public final class AppDelegate: NSObject, NSApplicationDelegate {
                 self.refreshMenu()
             }
         }
+        AudioDevices.startWatchingDevices()
         buildStatusItem()
         applySettingsToEngine()
         wireHotkey()
@@ -168,6 +169,33 @@ public final class AppDelegate: NSObject, NSApplicationDelegate {
 
         hotkey.start()
         commandHotkey.start()
+    }
+
+    /// Write down what the core's speech check saw.
+    ///
+    /// Logged on every dictation, not only the rejected ones, because the
+    /// interesting number is where real speech from *this* microphone sits
+    /// relative to the threshold — and that is unknowable from the failures
+    /// alone. A take dropped for "no speech" with nothing in the log behind it
+    /// is indistinguishable from a dictation that vanished, which is precisely
+    /// the class of silent failure this file's log exists to prevent.
+    private func logSpeechMeasurement(_ samples: [Float]) {
+        let t0 = ProcessInfo.processInfo.systemUptime
+        let m = measureSpeech(samples: samples)
+        let ms = Int((ProcessInfo.processInfo.systemUptime - t0) * 1000)
+        // The pitch half only runs when the loudness half said no, so its cost
+        // is worth watching: it sits on the path between releasing the key and
+        // seeing text.
+        let pitch =
+            m.pitchChecked
+            ? " voiced=\(m.voicedFrames) variety=\(String(format: "%.2f", m.pitchVariety))"
+            : " (pitch not needed)"
+        Diag.log(
+            "speech check: \(m.hasSpeech ? "speech" : "NO SPEECH") "
+                + "room=\(String(format: "%.5f", m.room)) "
+                + "loud=\(String(format: "%.5f", m.loud)) "
+                + "ratio=\(String(format: "%.1f", m.ratio)) "
+                + "frames=\(m.frames)" + pitch + " in \(ms)ms")
     }
 
     /// Short label for where transcription happens.
@@ -404,6 +432,7 @@ public final class AppDelegate: NSObject, NSApplicationDelegate {
             overlay.hide()
             return
         }
+        logSpeechMeasurement(samples)
 
         overlay.show(.transcribing)
         let generation = beginBusy()

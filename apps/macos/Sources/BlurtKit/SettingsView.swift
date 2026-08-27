@@ -1,4 +1,5 @@
 import BlurtCore
+import Combine
 import SwiftUI
 
 enum SettingsTab: Hashable {
@@ -226,11 +227,15 @@ struct GeneralTab: View {
             vocabularyText = model.vocabulary.joined(separator: "\n")
             cleanupModel = model.cleanupModel
             if case .cloud(let p) = model.transcriptionSource { cloudProvider = p }
-            // Enumerated on appear rather than held: devices come and go while
-            // the window is closed, and a stale list would offer a mic that is
-            // no longer there.
             inputDevices = AudioDevices.inputDevices()
             inputDeviceUID = Settings.inputDeviceUID ?? ""
+        }
+        // Re-enumerated on every hardware change rather than only on appear.
+        // The settings window is built once and reused, so `onAppear` runs once
+        // per launch: connect earbuds afterwards and they were missing from the
+        // picker with no way to get them back short of quitting the app.
+        .onReceive(NotificationCenter.default.publisher(for: .blurtAudioDevicesChanged)) { _ in
+            inputDevices = AudioDevices.inputDevices()
         }
     }
 

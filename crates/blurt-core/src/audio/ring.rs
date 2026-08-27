@@ -2,7 +2,7 @@ use std::collections::VecDeque;
 use std::sync::Mutex;
 use std::time::{Duration, Instant};
 
-use super::{PREROLL_MS, SAMPLE_RATE};
+use super::{rms, PREROLL_MS, SAMPLE_RATE};
 
 /// A microphone buffer with a rolling pre-roll window.
 ///
@@ -165,14 +165,6 @@ impl Default for AudioCapture {
     fn default() -> Self {
         Self::new()
     }
-}
-
-fn rms(frames: &[f32]) -> f32 {
-    if frames.is_empty() {
-        return 0.0;
-    }
-    let sum: f32 = frames.iter().map(|f| f * f).sum();
-    (sum / frames.len() as f32).sqrt().clamp(0.0, 1.0)
 }
 
 impl AudioCapture {

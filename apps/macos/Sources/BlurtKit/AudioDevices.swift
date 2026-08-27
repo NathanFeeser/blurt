@@ -55,18 +55,21 @@ enum AudioDevices {
 
     /// Judge a microphone before it ruins a dictation.
     ///
-    /// Bluetooth is the case that matters. When a headset's microphone opens,
-    /// macOS drops the link from A2DP into hands-free mode: narrowband, heavily
-    /// compressed, and aggressively noise-gated. The gating is the real damage —
-    /// it removes quiet syllables outright, so the transcript comes back with
-    /// holes in it and the model hallucinates to fill them. No amount of picking
-    /// a better transcription model fixes audio that never contained the words.
+    /// The rate is the whole rule, and it deliberately does not care about the
+    /// transport. Bluetooth used to be flagged outright, on the theory that
+    /// hands-free mode is narrowband — but that is only true of HFP's older
+    /// CVSD codec at 8 kHz. Any modern headset negotiates mSBC at 16 kHz, which
+    /// is *exactly* the rate transcription runs at, and flagging it warned
+    /// people away from a microphone that was performing at full fidelity.
+    ///
+    /// Judging the rate instead also covers the cheap USB microphone that
+    /// captures at 8 kHz, which is just as bad and used to sail through.
+    ///
+    /// What is left of the Bluetooth concern is real but not a property of the
+    /// device: HFP loses packets on a congested 2.4 GHz band, and some headsets
+    /// gate quiet consonants away. Both are intermittent and situational, which
+    /// makes them a bad fit for a permanent banner.
     static func quality(of device: AudioInputDevice) -> InputQuality {
-        if device.transport == .bluetooth {
-            return .degraded(
-                "\(device.name) is a Bluetooth mic. macOS switches it to narrowband "
-                    + "hands-free mode, which drops words.")
-        }
         // 16 kHz is exactly what transcription wants, so it is not itself a
         // problem — below that, the words are simply not in the signal.
         if device.sampleRate > 0, device.sampleRate < 16000 {
@@ -88,6 +91,37 @@ enum AudioDevices {
     }
 
     // MARK: - CoreAudio
+
+    /// Start reporting when microphones come and go, as
+    /// `.blurtAudioDevicesChanged`.
+    ///
+    /// Called once at launch. Without it, any list of microphones on screen is
+    /// whatever was attached when it was first drawn: the settings window is
+    /// built once and reused, so its `onAppear` runs exactly once per launch,
+    /// and a headset connected afterwards never appears in the picker at all.
+    /// The default-input selector is watched alongside the device list because
+    /// the warning shown under the picker describes whichever microphone would
+    /// actually be used, and that moves without any device coming or going.
+    static func startWatchingDevices() {
+        for selector in [
+            kAudioHardwarePropertyDevices, kAudioHardwarePropertyDefaultInputDevice,
+        ] {
+            var address = AudioObjectPropertyAddress(
+                mSelector: selector,
+                mScope: kAudioObjectPropertyScopeGlobal,
+                mElement: kAudioObjectPropertyElementMain)
+            // The block captures nothing and only posts: enumeration happens on
+            // the main thread, in whoever is displaying the list.
+            let status = AudioObjectAddPropertyListenerBlock(
+                AudioObjectID(kAudioObjectSystemObject), &address, DispatchQueue.main
+            ) { _, _ in
+                NotificationCenter.default.post(name: .blurtAudioDevicesChanged, object: nil)
+            }
+            if status != noErr {
+                Diag.log("could not watch audio devices (selector \(selector), status \(status))")
+            }
+        }
+    }
 
     /// Whether the graph has to be torn down because the microphone it is bound
     /// to is no longer the one we want.
@@ -236,4 +270,10 @@ enum AudioDevices {
         default: return .other
         }
     }
+}
+
+extension Notification.Name {
+    /// The set of attached audio devices, or which one is the system default,
+    /// changed. Posted by `AudioDevices.startWatchingDevices()`.
+    static let blurtAudioDevicesChanged = Notification.Name("blurtAudioDevicesChanged")
 }

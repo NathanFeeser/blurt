@@ -12,25 +12,34 @@ private func device(
     AudioInputDevice(id: 1, uid: uid, name: name, sampleRate: rate, transport: transport)
 }
 
-/// The rule that would have caught a morning of debugging: earbuds connected,
-/// the system default moved to their narrowband mic, and every transcript came
-/// back with holes in it while the app said nothing.
+/// What a microphone captures decides this, never how it is attached.
 @Suite("Microphone quality")
 struct InputQualityTests {
 
-    @Test("Bluetooth microphones are flagged")
-    func bluetoothIsFlagged() {
-        let earbuds = device("Nothing Ear (a)", rate: 16000, transport: .bluetooth)
-        #expect(AudioDevices.quality(of: earbuds).warning != nil)
-        #expect(AudioDevices.quality(of: earbuds).warning?.contains("Nothing Ear (a)") == true)
+    @Test("Bluetooth at the wideband rate is fine")
+    func widebandBluetoothIsFine() {
+        // Blanket-flagging Bluetooth was wrong: HFP is only narrowband on the
+        // old CVSD codec. Modern headsets negotiate mSBC at 16 kHz, which is
+        // the rate transcription runs at, so there is nothing to warn about.
+        let earbuds = device("Nothing Ear (a)", uid: "bt-uid", rate: 16000, transport: .bluetooth)
+        #expect(AudioDevices.quality(of: earbuds) == .fine)
     }
 
-    @Test("Bluetooth is flagged on its transport, not its sample rate")
-    func bluetoothFlaggedEvenAtAHealthyRate() {
-        // The damage is the hands-free codec and its noise gate, so a Bluetooth
-        // device advertising a fine rate is still a bad idea.
-        let headset = device("Some Headset", rate: 48000, transport: .bluetooth)
+    @Test("Bluetooth at the narrowband rate is flagged")
+    func narrowbandBluetoothIsFlagged() {
+        // A headset that fell back to CVSD is a real problem, and the rate is
+        // what says so.
+        let headset = device("Old Headset", uid: "bt-old", rate: 8000, transport: .bluetooth)
         #expect(AudioDevices.quality(of: headset).warning != nil)
+        #expect(AudioDevices.quality(of: headset).warning?.contains("Old Headset") == true)
+    }
+
+    @Test("A cheap wired microphone gets the same judgement")
+    func narrowbandUsbIsFlagged() {
+        // The transport rule let this through, which was the other half of its
+        // being the wrong rule.
+        let usb = device("Cheap USB Mic", uid: "usb-uid", rate: 8000, transport: .usb)
+        #expect(AudioDevices.quality(of: usb).warning != nil)
     }
 
     @Test("The built-in microphone is fine")

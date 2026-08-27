@@ -19,7 +19,7 @@ pub mod pipeline;
 pub mod providers;
 pub mod vocab;
 
-pub use audio::{AudioCapture, CaptureStats, SAMPLE_RATE};
+pub use audio::{measure_speech, AudioCapture, CaptureStats, SpeechMeasurement, SAMPLE_RATE};
 pub use context::AppContext;
 pub use engine::DictationEngine;
 pub use error::DictError;

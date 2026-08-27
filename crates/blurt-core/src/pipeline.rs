@@ -6,7 +6,7 @@
 
 use std::sync::Arc;
 
-use crate::audio::SAMPLE_RATE;
+use crate::audio::{contains_speech, SAMPLE_RATE};
 use crate::cleanup::{build_cleanup_request, build_command_request, needs_cleanup};
 use crate::context::AppContext;
 use crate::error::{DictError, Result};
@@ -90,6 +90,17 @@ pub async fn run_dictation(
     }
     let audio_duration_ms = (samples.len() as u64 * 1000) / SAMPLE_RATE as u64;
 
+    // Nobody spoke. Stop here rather than asking the model what it heard:
+    // Whisper answers silence with the likeliest caption in its training data
+    // ("Thank you." is the usual one) and states it as confidently as a real
+    // transcript, so a press with nothing said pastes words into the user's
+    // document. See `audio::contains_speech`. Returning early also means a
+    // silent press costs no round trip and comes back instantly.
+    if !contains_speech(samples) {
+        tracing::debug!("no speech in {audio_duration_ms}ms of audio; skipping transcription");
+        return Ok(silent(mode, audio_duration_ms, started));
+    }
+
     let transcript: Transcript = stages
         .stt
         .transcribe(SttRequest {
@@ -148,6 +159,34 @@ pub async fn run_dictation(
             total_ms: started.elapsed().as_millis() as u64,
         },
     })
+}
+
+/// The result for a recording that carried no words.
+///
+/// `final_text` empty is the signal the rest of the app already understands:
+/// the shells insert nothing and say so, and history declines to record it.
+fn silent(mode: &Mode, audio_duration_ms: u64, started: std::time::Instant) -> DictationResult {
+    DictationResult {
+        entry_id: None,
+        mode_id: mode.id.clone(),
+        mode_name: mode.name.clone(),
+        raw_text: String::new(),
+        final_text: String::new(),
+        cleanup_ran: false,
+        cleanup_error: None,
+        audio_duration_ms,
+        detected_language: None,
+        // What *would* have run. Reporting the mode's configuration rather than
+        // an empty string keeps the diagnostic line for a silent press readable
+        // alongside every other one.
+        stt_provider: mode.stt.provider_id.clone(),
+        stt_model: mode.stt.model.clone(),
+        timings: Timings {
+            stt_ms: 0,
+            cleanup_ms: 0,
+            total_ms: started.elapsed().as_millis() as u64,
+        },
+    }
 }
 
 /// Outcome of the cleanup stage on its own.
@@ -236,6 +275,13 @@ pub async fn run_command(
         return Err(DictError::NoAudio);
     }
     let audio_duration_ms = (samples.len() as u64 * 1000) / SAMPLE_RATE as u64;
+
+    // An instruction nobody spoke must not be invented. Worse here than in
+    // dictation: a hallucinated command is applied to the user's selected text.
+    if !contains_speech(samples) {
+        tracing::debug!("no speech in {audio_duration_ms}ms of audio; skipping the command");
+        return Ok(silent(mode, audio_duration_ms, started));
+    }
 
     let transcript = stages
         .stt
@@ -389,8 +435,69 @@ mod tests {
         );
     }
 
+    #[tokio::test]
+    async fn silence_never_reaches_the_model() {
+        // The "Thank you." bug: hold the key, say nothing, release, and Whisper
+        // captions the silence. The provider must not be asked in the first
+        // place.
+        let stages = Stages {
+            stt: std::sync::Arc::new(NeverCalledStt),
+            cleanup: None,
+        };
+        let result = run_dictation(
+            &vec![0.0; 16000 * 2],
+            &stages,
+            &Mode::default_dictation(),
+            &AppContext::default(),
+            &Vocabulary::default(),
+        )
+        .await
+        .expect("silence is not an error, it is an empty result");
+        assert!(result.final_text.is_empty());
+        assert!(result.raw_text.is_empty());
+        assert_eq!(result.audio_duration_ms, 2000);
+    }
+
+    #[tokio::test]
+    async fn a_silent_command_is_never_invented() {
+        // Worse than the dictation case: a hallucinated instruction gets
+        // applied to whatever the user had selected.
+        let stages = Stages {
+            stt: std::sync::Arc::new(NeverCalledStt),
+            cleanup: Some(std::sync::Arc::new(NeverCalledLlm)),
+        };
+        let ctx = AppContext {
+            selected_text: Some("some text to operate on".into()),
+            ..AppContext::default()
+        };
+        let result = run_command(
+            &vec![0.0; 16000 * 2],
+            &stages,
+            &Mode::default_dictation(),
+            &ctx,
+            &Vocabulary::default(),
+        )
+        .await
+        .expect("silence is not an error");
+        assert!(result.final_text.is_empty());
+    }
+
     /// Panics if reached: these tests assert we bail out before any network use.
     struct NeverCalledStt;
+    struct NeverCalledLlm;
+
+    #[async_trait::async_trait]
+    impl crate::providers::LlmProvider for NeverCalledLlm {
+        fn name(&self) -> &str {
+            "never"
+        }
+        fn model(&self) -> &str {
+            "never"
+        }
+        async fn complete(&self, _req: crate::providers::LlmRequest) -> Result<String> {
+            panic!("provider must not be called");
+        }
+    }
 
     #[async_trait::async_trait]
     impl crate::providers::SttProvider for NeverCalledStt {
