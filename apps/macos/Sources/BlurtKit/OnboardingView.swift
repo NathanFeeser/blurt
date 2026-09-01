@@ -372,6 +372,24 @@ private struct AccessibilityStep: View {
 
             Text("Find Blurt in the list and switch it on. This screen moves on by itself.")
                 .font(.callout).foregroundStyle(.secondary)
+
+            Divider()
+
+            // The escape hatch from the one dead end this flow can reach.
+            // macOS works out accessibility trust when a process launches, so a
+            // switch turned on underneath a running app may never reach it —
+            // and then this screen refuses to continue while System Settings
+            // insists the permission is granted.
+            VStack(alignment: .leading, spacing: 8) {
+                Text("Already switched it on and this screen has not noticed?")
+                    .font(.callout)
+                Text(
+                    "macOS works this out when Blurt starts, so it sometimes takes a "
+                        + "relaunch to see it. Nothing is lost — setup resumes here."
+                )
+                .font(.callout).foregroundStyle(.secondary)
+                Button("Quit and Reopen Blurt") { Permissions.relaunch() }
+            }
         }
     }
 }

@@ -54,6 +54,30 @@ enum Permissions {
         return AXIsProcessTrustedWithOptions(options as CFDictionary)
     }
 
+    /// Quit and reopen this app.
+    ///
+    /// macOS decides whether a process is a trusted accessibility client when
+    /// the process starts, and granting the permission to an app that is
+    /// already running does not reliably reach it. Without a way to relaunch,
+    /// setup dead-ends: the switch in System Settings is visibly on, the app
+    /// still reports no access, and nothing the user does from that screen can
+    /// change it.
+    ///
+    /// The helper waits for this process to actually exit before reopening, so
+    /// two copies never overlap and fight over the same hotkey.
+    @MainActor
+    static func relaunch() {
+        let path = Bundle.main.bundlePath
+        let task = Process()
+        task.executableURL = URL(fileURLWithPath: "/bin/sh")
+        task.arguments = [
+            "-c",
+            "while kill -0 \(getpid()) 2>/dev/null; do sleep 0.2; done; open \"\(path)\"",
+        ]
+        try? task.run()
+        NSApp.terminate(nil)
+    }
+
     static func openAccessibilitySettings() {
         let url = URL(
             string: "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility")!
