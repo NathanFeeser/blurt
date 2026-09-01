@@ -1,0 +1,308 @@
+#!/usr/bin/env bash
+# Build, sign, notarize, and package Blurt for direct download.
+#
+#   ./scripts/release-macos.sh [--version X.Y.Z] [--skip-notarize] [--publish]
+#
+# Output:
+#   build/release/Blurt-X.Y.Z.dmg   <- what people download
+#   build/release/Blurt-X.Y.Z.zip   <- what Sparkle downloads
+#
+# With --publish it also tags the commit and creates the GitHub release, which
+# is the step that actually puts the .dmg somewhere a stranger can reach.
+#
+# This is deliberately separate from build-macos-app.sh. That script is the
+# development loop and must stay fast and offline; this one talks to Apple's
+# notary service and is expected to take minutes.
+#
+# Prerequisites, both one-time:
+#
+#   1. A "Developer ID Application" certificate in the login keychain. Not
+#      "Apple Development" (which only runs on registered development machines)
+#      and not "Apple Distribution" (which is App Store only, a store Blurt can
+#      never ship on because Accessibility requires an unsandboxed process).
+#      Xcode > Settings > Accounts > Manage Certificates > + > Developer ID Application
+#
+#   2. notarytool credentials stored in a keychain profile:
+#      xcrun notarytool store-credentials blurt-notary \
+#        --key AuthKey_XXXXXX.p8 --key-id XXXXXX --issuer <issuer-uuid>
+#
+#   3. For --publish only: the GitHub CLI, authenticated. `brew install gh`
+#      then `gh auth login`.
+set -euo pipefail
+cd "$(dirname "$0")/.."
+ROOT="$PWD"
+APPDIR="apps/macos"
+PLIST="$APPDIR/Resources/Info.plist"
+NOTARY_PROFILE="${BLURT_NOTARY_PROFILE:-blurt-notary}"
+
+VERSION=""
+SKIP_NOTARIZE=0
+PUBLISH=0
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --version) VERSION="${2:-}"; shift 2 ;;
+    --skip-notarize) SKIP_NOTARIZE=1; shift ;;
+    --publish) PUBLISH=1; shift ;;
+    *) echo "unknown flag: $1" >&2; exit 1 ;;
+  esac
+done
+
+if [[ -z "$VERSION" ]]; then
+  VERSION=$(plutil -extract CFBundleShortVersionString raw "$PLIST")
+fi
+[[ "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || {
+  echo "version must look like X.Y.Z, got: $VERSION" >&2; exit 1
+}
+
+# CFBundleVersion has to increase on every build Apple ever sees, and it is what
+# Sparkle compares to decide an update exists. Commit count is monotonic, needs
+# no state file, and is derivable from any checkout.
+BUILD_NUMBER=$(git rev-list --count HEAD)
+
+# ---------------------------------------------------------------------------
+# Preflight. Every one of these failures is cheaper to hit now than after a
+# five-minute build, and the notary service failures in particular are opaque
+# enough that catching them here is worth the duplication.
+# ---------------------------------------------------------------------------
+echo "==> Preflight"
+
+IDENTITY=$(security find-identity -v -p codesigning 2>/dev/null \
+  | grep -m1 -oE '"Developer ID Application: [^"]+"' | tr -d '"' || true)
+if [[ -z "$IDENTITY" ]]; then
+  cat >&2 <<'EOF'
+No "Developer ID Application" certificate found in the keychain.
+
+This is the only identity Gatekeeper accepts for an app distributed outside the
+App Store. Create one in about a minute:
+
+  Xcode > Settings > Accounts > (your team) > Manage Certificates
+    > + > Developer ID Application
+
+Then re-run this script. `security find-identity -v -p codesigning` should list
+it. Note that "Apple Development" and "Apple Distribution" certificates, which
+you may already have, will not work here: the first is limited to registered
+development machines, and the second only signs App Store submissions.
+EOF
+  exit 1
+fi
+echo "    identity:  $IDENTITY"
+
+if [[ "$SKIP_NOTARIZE" == "0" ]]; then
+  if ! xcrun notarytool history --keychain-profile "$NOTARY_PROFILE" >/dev/null 2>&1; then
+    cat >&2 <<EOF
+No usable notarytool credentials under keychain profile "$NOTARY_PROFILE".
+
+Create an App Store Connect API key (Users and Access > Integrations >
+App Store Connect API, Developer role), download the .p8 once, then:
+
+  xcrun notarytool store-credentials $NOTARY_PROFILE \\
+    --key ~/Downloads/AuthKey_XXXXXX.p8 --key-id XXXXXX --issuer <issuer-uuid>
+
+Or pass --skip-notarize to produce an unnotarized build for local testing. That
+build will run on this Mac and nowhere else without a Gatekeeper override.
+EOF
+    exit 1
+  fi
+  echo "    notary:    $NOTARY_PROFILE"
+else
+  echo "    notary:    SKIPPED (local build only)"
+fi
+
+TAG="v$VERSION"
+
+# Publishing preflight runs here, with the rest, rather than at the end where the
+# work happens: every one of these is a five-minute build and a notarization
+# round trip away from being discovered otherwise.
+if [[ "$PUBLISH" == "1" ]]; then
+  if [[ "$SKIP_NOTARIZE" == "1" ]]; then
+    echo "--publish with --skip-notarize would ship a build that runs on no Mac but this one." >&2
+    exit 1
+  fi
+
+  command -v gh >/dev/null 2>&1 || {
+    echo "gh not found. Install it with: brew install gh" >&2; exit 1; }
+  gh auth status >/dev/null 2>&1 || {
+    echo "gh is not authenticated. Run: gh auth login" >&2; exit 1; }
+
+  # A release names a commit that anyone can check out, so the tree has to be
+  # clean — untracked files included, since SwiftPM compiles any .swift sitting
+  # in a source directory whether git knows about it or not.
+  if [[ -n "$(git status --porcelain)" ]]; then
+    echo "Working tree is not clean. Commit or stash before publishing:" >&2
+    git status --short >&2
+    exit 1
+  fi
+
+  if git rev-parse -q --verify "refs/tags/$TAG" >/dev/null; then
+    echo "Tag $TAG already exists. Bump --version, or delete the tag." >&2
+    exit 1
+  fi
+
+  # BUILD_NUMBER is the commit count, so a release built from an unpushed commit
+  # gets a build number nobody else can reproduce.
+  git fetch --quiet origin 2>/dev/null || true
+  if ! git merge-base --is-ancestor HEAD origin/main 2>/dev/null; then
+    echo "HEAD is not on origin/main. Push your commits before publishing." >&2
+    exit 1
+  fi
+
+  REPO=$(gh repo view --json nameWithOwner -q .nameWithOwner)
+  echo "    publish:   $TAG to $REPO"
+fi
+
+echo "    version:   $VERSION ($BUILD_NUMBER)"
+
+# ---------------------------------------------------------------------------
+# Build. Release configuration, tests included: a release that skips its own
+# test suite is how a broken build gets a version number.
+# ---------------------------------------------------------------------------
+echo
+echo "==> Building"
+BLURT_SIGN_IDENTITY="$IDENTITY" BLURT_SECURE_TIMESTAMP=1 BLURT_UNIVERSAL=1 \
+  ./scripts/build-macos-app.sh --release
+
+APP="$ROOT/build/Blurt.app"
+[[ -d "$APP" ]] || { echo "expected $APP" >&2; exit 1; }
+
+# ---------------------------------------------------------------------------
+# Stamp the version and re-sign.
+#
+# The signature covers Info.plist, so editing the version has to happen before
+# signing — which means re-signing here rather than teaching the build script
+# about release versioning. codesign --force replacing its own signature is
+# routine, and it keeps the development path free of release concerns.
+# ---------------------------------------------------------------------------
+echo
+echo "==> Stamping $VERSION ($BUILD_NUMBER)"
+plutil -replace CFBundleShortVersionString -string "$VERSION" "$APP/Contents/Info.plist"
+plutil -replace CFBundleVersion -string "$BUILD_NUMBER" "$APP/Contents/Info.plist"
+
+echo "==> Re-signing"
+codesign --force \
+  --sign "$IDENTITY" \
+  --options runtime \
+  --entitlements "$APPDIR/Resources/Blurt.entitlements" \
+  --timestamp \
+  "$APP"
+
+# --strict catches things a plain verify will not, and is closer to what the
+# notary service itself runs.
+codesign --verify --deep --strict --verbose=2 "$APP"
+
+echo "==> Architectures"
+lipo -info "$APP/Contents/MacOS/Blurt" | sed 's/^/    /'
+for arch in arm64 x86_64; do
+  lipo -info "$APP/Contents/MacOS/Blurt" | grep -q "$arch" || {
+    echo "release binary is missing the $arch slice" >&2; exit 1; }
+done
+
+RELEASE="$ROOT/build/release"
+rm -rf "$RELEASE"
+mkdir -p "$RELEASE"
+ZIP="$RELEASE/Blurt-$VERSION.zip"
+DMG="$RELEASE/Blurt-$VERSION.dmg"
+
+# ---------------------------------------------------------------------------
+# Notarize the app, then staple it.
+#
+# The app is notarized inside a zip because the notary service does not accept a
+# bare .app, but the ticket is stapled to the .app itself. That matters: Sparkle
+# updates hand the extracted app to the user directly, and a stapled app
+# validates with no network at all. An unstapled one silently depends on the
+# user being online at first launch.
+# ---------------------------------------------------------------------------
+echo
+echo "==> Packaging $(basename "$ZIP")"
+ditto -c -k --keepParent "$APP" "$ZIP"
+
+if [[ "$SKIP_NOTARIZE" == "0" ]]; then
+  echo "==> Notarizing the app (this takes a few minutes)"
+  xcrun notarytool submit "$ZIP" --keychain-profile "$NOTARY_PROFILE" --wait
+
+  echo "==> Stapling"
+  xcrun stapler staple "$APP"
+
+  # Re-zip so the distributed archive contains the stapled app rather than the
+  # copy that went to the notary service without a ticket.
+  rm -f "$ZIP"
+  ditto -c -k --keepParent "$APP" "$ZIP"
+fi
+
+# ---------------------------------------------------------------------------
+# The DMG. Plain hdiutil rather than create-dmg: no extra dependency, and the
+# window layout is not worth a build-time dependency for a menu bar app whose
+# entire install story is one drag.
+# ---------------------------------------------------------------------------
+echo
+echo "==> Packaging $(basename "$DMG")"
+STAGE=$(mktemp -d)
+trap 'rm -rf "$STAGE"' EXIT
+# ditto rather than cp -R, for the same reason the zip above uses it: this app
+# is signed and carries a stapled notarization ticket, and ditto is the only
+# copy that preserves the extended attributes a bundle's signature depends on.
+ditto "$APP" "$STAGE/Blurt.app"
+ln -s /Applications "$STAGE/Applications"
+hdiutil create -volname "Blurt" -srcfolder "$STAGE" -ov -format UDZO "$DMG" >/dev/null
+
+if [[ "$SKIP_NOTARIZE" == "0" ]]; then
+  # The DMG is notarized separately from the app it carries. Stapling it means a
+  # first-time download opens without Gatekeeper phoning home, which is exactly
+  # the moment someone decides whether this app is trustworthy.
+  echo "==> Notarizing the disk image"
+  xcrun notarytool submit "$DMG" --keychain-profile "$NOTARY_PROFILE" --wait
+  xcrun stapler staple "$DMG"
+
+  echo
+  echo "==> Verifying as Gatekeeper sees it"
+  spctl --assess --type execute --verbose=2 "$APP"
+  xcrun stapler validate "$DMG"
+fi
+
+# ---------------------------------------------------------------------------
+# Publish. Tag first: if the upload fails the tag is still the record of what
+# was built, and `gh release create` can be re-run against it by hand.
+# ---------------------------------------------------------------------------
+if [[ "$PUBLISH" == "1" ]]; then
+  echo
+  echo "==> Tagging $TAG"
+  git tag -a "$TAG" -m "Blurt $VERSION"
+  git push --quiet origin "$TAG"
+
+  echo "==> Creating the GitHub release"
+  NOTES=$(mktemp)
+  {
+    cat <<EOF
+Download **$(basename "$DMG")** below, open it, and drag Blurt to Applications.
+
+Signed with a Developer ID certificate and notarized by Apple, so it opens
+without a Gatekeeper warning.
+
+First launch walks you through setup: a transcription provider (bring an API key,
+or run a model on your Mac), Microphone, and Accessibility. **Accessibility is
+not optional** — without it the hotkey installs successfully and then silently
+never fires, so setup will not let you past it.
+
+Requires macOS 13 or newer.
+EOF
+    if PREV=$(git describe --tags --abbrev=0 "$TAG^" 2>/dev/null); then
+      printf '\n**Changes:** https://github.com/%s/compare/%s...%s\n' "$REPO" "$PREV" "$TAG"
+    fi
+  } > "$NOTES"
+
+  gh release create "$TAG" "$DMG" "$ZIP" \
+    --title "Blurt $VERSION" \
+    --notes-file "$NOTES"
+  rm -f "$NOTES"
+fi
+
+echo
+echo "OK  $DMG"
+echo "OK  $ZIP"
+if [[ "$PUBLISH" == "1" ]]; then
+  echo "OK  $(gh release view "$TAG" --json url -q .url)"
+fi
+if [[ "$SKIP_NOTARIZE" == "1" ]]; then
+  echo
+  echo "NOTE  Not notarized. This build runs on this Mac only; anywhere else"
+  echo "      Gatekeeper will refuse it with a damaged-file error."
+fi

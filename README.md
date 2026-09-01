@@ -5,6 +5,7 @@ Bring your own API key, or run the whole thing on your own machine.
 
 [![CI](https://github.com/NathanFeeser/blurt/actions/workflows/ci.yml/badge.svg)](https://github.com/NathanFeeser/blurt/actions/workflows/ci.yml)
 [![License](https://img.shields.io/badge/license-Apache--2.0-blue.svg)](LICENSE)
+[![Release](https://img.shields.io/github/v/release/NathanFeeser/blurt)](https://github.com/NathanFeeser/blurt/releases/latest)
 ![Platform](https://img.shields.io/badge/platform-macOS%2013%2B-lightgrey)
 
 ## Why this exists
@@ -29,9 +30,48 @@ stage, not the transcription. [DictBench](eval/) runs the real production prompt
 against real cases, so a prompt change that makes things worse shows up as a
 number instead of a feeling.
 
-## Quickstart
+## Install
 
-You need macOS 13 or newer, [Rust](https://rustup.rs), and Xcode 16+.
+Download the latest `.dmg` from
+[Releases](https://github.com/NathanFeeser/blurt/releases/latest), open it, and
+drag Blurt to Applications. macOS 13 or newer, Apple Silicon or Intel.
+
+The app is signed with a Developer ID certificate and notarized by Apple, so it
+opens without a Gatekeeper warning and without you right-clicking anything.
+
+First launch opens a setup flow covering the three things Blurt needs: somewhere
+to transcribe (a [Groq API key](https://console.groq.com/keys), whose free tier
+is plenty to start, or a model that runs entirely on your Mac), your microphone,
+and Accessibility. It won't move past a step until the thing it asked for is
+actually true, and it ends by having you dictate a sentence — so you find out it
+works before you close it.
+
+Accessibility is not optional. Without it the hotkey installs successfully and
+then silently never fires, which is the most confusing failure this app has.
+
+After that: **hold Right Option**, speak, release. The text lands wherever your
+cursor is. Escape while holding cancels. Double-tap to go hands-free, then tap
+once to finish. To edit text you already have, select it and hold Right Command
+instead.
+
+Setup reopens from the menu bar icon at any time, and comes back on its own if a
+permission is ever revoked.
+
+## Building from source
+
+Only needed if you want to change something; the download above is the same app.
+
+You need macOS 13 or newer, [Rust](https://rustup.rs), and Xcode 16+ — the full
+Xcode, not only the Command Line Tools, since the core is packaged with
+`xcodebuild -create-xcframework`.
+
+Confirm both in the terminal you're about to build from. Installed is not the
+same as on your `PATH`, and the difference is invisible until the build stops:
+
+```bash
+cargo --version
+xcodebuild -version
+```
 
 ```bash
 git clone https://github.com/NathanFeeser/blurt.git
@@ -39,22 +79,13 @@ cd blurt
 ./scripts/build-macos-app.sh --run      # builds build/Blurt.app and launches it
 ```
 
-First launch asks for Microphone and Accessibility. Accessibility is not
-optional. Without it the hotkey installs successfully and then silently never
-fires, which is the most confusing failure this app has.
+Give the first build a few minutes. It installs five Rust targets and compiles
+the core for all of them, because the portability claim below is something the
+build checks rather than something this file asserts. After that it only
+rebuilds what changed, and `--run` replaces the running copy each time.
 
-Then, from the menu bar icon:
-
-1. **Providers.** Paste a [Groq API key](https://console.groq.com/keys); the free
-   tier is plenty to start. Or open General, switch to "On this Mac", and
-   download a local model instead. No key, no network.
-2. **Microphone.** Pin the mic you actually want. This is worth ten seconds of
-   your time: the system default moves on its own when you connect earbuds, and
-   a Bluetooth mic in hands-free mode drops words that no model can recover.
-3. **Hold Right Option**, speak, release. The text lands wherever your cursor is.
-
-Escape while holding cancels. Double-tap to go hands-free, then tap once to
-finish. To edit text you already have, select it and hold Right Command instead.
+Then set it up exactly as above: the permissions and the provider key are the
+same whether the app came from a release or from your own build.
 
 ## What it does
 
@@ -153,7 +184,7 @@ crates/blurt-cli/     `blurt`, the terminal driver the eval harness uses
 apps/macos/           menu bar app: hotkey, capture, AX context, insertion
 eval/                 DictBench: cases, graders, findings
 swift/SmokeTest/      proves the Rust/Swift boundary works
-scripts/              xcframework build, app build, smoke test
+scripts/              xcframework build, app build, release, icon, smoke test
 docs/                 architecture, research, internal plan
 ```
 
@@ -164,6 +195,15 @@ philosophy, where the seams are, and a worked example of adding a transcription
 provider, which is the most self-contained way into the codebase.
 
 ## Troubleshooting
+
+**The build says `cargo not found on PATH`.** Rust is probably installed and
+merely invisible: rustup drops `~/.cargo/env` in place but leaves sourcing it to
+your shell profile, and some installs never get that line. Add it and open a new
+shell:
+
+```bash
+echo '. "$HOME/.cargo/env"' >> ~/.zshenv
+```
 
 **The hotkey does nothing.** Check whether another app has claimed the same key.
 An event tap that consumes the press sits upstream of the monitor Blurt listens
