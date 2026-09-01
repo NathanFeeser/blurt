@@ -1,6 +1,7 @@
 import Foundation
 
-/// Append-only diagnostic log at `~/Library/Logs/Blurt.log`.
+/// Append-only diagnostic log at `~/Library/Logs/Blurt.log` (`Blurt.dev.log`
+/// for development builds).
 ///
 /// Worth keeping rather than deleting after the bug that motivated it: almost
 /// everything this app depends on — microphone, Accessibility, code signature,
@@ -9,9 +10,13 @@ import Foundation
 /// stderr and `log show` depending on how the process was launched. A plain file
 /// is the only thing that reliably answers "did this code path run".
 enum Diag {
+    /// `Blurt.log` for the released app, `Blurt.dev.log` for everything else,
+    /// tests included. Two builds interleaving lines in one file is a log that
+    /// answers the wrong question about the wrong process.
     static let url = FileManager.default
         .homeDirectoryForCurrentUser
-        .appendingPathComponent("Library/Logs/Blurt.log")
+        .appendingPathComponent(
+            AppIdentity.isDevelopment ? "Library/Logs/Blurt.dev.log" : "Library/Logs/Blurt.log")
 
     /// Serialises writes and guarantees the file exists before opening a handle.
     /// The first version of this raced on creation and dropped lines, which is a

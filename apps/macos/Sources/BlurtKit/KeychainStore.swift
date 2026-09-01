@@ -8,7 +8,11 @@ import Security
 /// least careful place it gets written. See the privacy model in
 /// docs/ARCHITECTURE.md.
 enum KeychainStore {
-    private static let service = "com.nerflabs.blurt"
+    /// The bundle id, so a development build keeps its keys apart from the
+    /// released app's. An item is only readable without a prompt by the
+    /// signature that created it; sharing one service across two signatures
+    /// meant a password dialog for every read after installing a release.
+    private static let service = AppIdentity.bundleId
 
     static func set(_ value: String?, for providerId: String) {
         // Delete first: SecItemUpdate needs a different code path and this is

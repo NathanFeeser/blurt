@@ -1,7 +1,12 @@
 #!/usr/bin/env bash
 # Put this Mac back to a first-run state, so the setup flow can be tested.
 #
-#   ./scripts/reset-onboarding.sh [--keys] [--yes]
+#   ./scripts/reset-onboarding.sh [--keys] [--yes] [--installed]
+#
+# Targets the development build (com.nerflabs.blurt.dev) unless --installed is
+# given, which targets the released app in /Applications instead. They are
+# separate apps with separate state, so resetting one leaves the other alone —
+# except that both are quit first, because they share an executable name.
 #
 # Setup skips any step whose requirement is already met, which is right for
 # users and unhelpful when you are trying to look at the flow: with a key saved
@@ -19,17 +24,19 @@
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
-BUNDLE_ID="com.nerflabs.blurt"
+BUNDLE_ID="com.nerflabs.blurt.dev"
 CLEAR_KEYS=0
 ASSUME_YES=0
 for arg in "$@"; do
   case "$arg" in
     --keys) CLEAR_KEYS=1 ;;
     --yes) ASSUME_YES=1 ;;
+    --installed) BUNDLE_ID="com.nerflabs.blurt" ;;
     *) echo "unknown flag: $arg" >&2; exit 1 ;;
   esac
 done
 
+echo "Target: $BUNDLE_ID"
 echo "This will:"
 echo "  * forget that setup was ever completed"
 echo "  * revoke Blurt's Microphone and Accessibility permissions"

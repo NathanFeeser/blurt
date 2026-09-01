@@ -13,7 +13,7 @@ Nothing else — no package manager, no `.xcodeproj`.
 ./scripts/build-xcframework.sh       # just the Rust core as an XCFramework
 ./scripts/swift-smoke.sh             # exercises the Rust <-> Swift boundary
 cargo test --all                     # 95 core tests
-swift test --package-path apps/macos # 79 app tests
+swift test --package-path apps/macos # 80 app tests
 ```
 
 `swift-smoke.sh` is not part of the app build, so run it after changing anything
@@ -26,8 +26,19 @@ shell you were not thinking about.
 bindings. That is deliberate: stale FFI bindings fail in confusing ways, and
 cargo already no-ops when nothing changed. Set `BLURT_SKIP_TESTS=1` to skip the
 test run during a tight edit loop, and `BLURT_SIGN_IDENTITY` to a stable
-Developer ID so macOS stops treating each rebuild as a new app and re-prompting
+certificate so macOS stops treating each rebuild as a new app and re-prompting
 for permissions.
+
+What it builds is **Blurt Dev**, `com.nerflabs.blurt.dev` — a different app
+from the one in Releases, on purpose. macOS keys every kind of trust on bundle
+id plus signature, and a local build is signed differently from a release, so
+sharing one id meant the two fought over keychain items, Accessibility grants,
+Sparkle's update state and the history database. With separate ids they share
+nothing but the hotkey: their own permissions (granted once each), their own
+preferences, their own API keys, `~/Library/Logs/Blurt.dev.log` instead of
+`Blurt.log`, and both can run at the same time. Everything the app owns on
+disk or in a system database derives its name from `AppIdentity`, never from
+a literal — keep it that way.
 
 ## Where things live
 

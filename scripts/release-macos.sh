@@ -209,7 +209,11 @@ echo "    version:   $VERSION ($BUILD_NUMBER)"
 # ---------------------------------------------------------------------------
 echo
 echo "==> Building"
+# BLURT_BUNDLE_ID: without it the build script stamps the development id, and
+# Sparkle refuses an update whose bundle id differs from the running app's —
+# a ".dev" release would be rejected by every installed copy, silently.
 BLURT_SIGN_IDENTITY="$IDENTITY" BLURT_SECURE_TIMESTAMP=1 BLURT_UNIVERSAL=1 \
+  BLURT_BUNDLE_ID="$(plutil -extract CFBundleIdentifier raw "$PLIST")" \
   ./scripts/build-macos-app.sh --release
 
 APP="$ROOT/build/Blurt.app"
@@ -239,6 +243,14 @@ codesign --force \
 # --strict catches things a plain verify will not, and is closer to what the
 # notary service itself runs.
 codesign --verify --deep --strict --verbose=2 "$APP"
+
+echo "==> Identity"
+BUILT_ID=$(plutil -extract CFBundleIdentifier raw "$APP/Contents/Info.plist")
+WANT_ID=$(plutil -extract CFBundleIdentifier raw "$PLIST")
+echo "    $BUILT_ID"
+[[ "$BUILT_ID" == "$WANT_ID" ]] || {
+  echo "release is stamped $BUILT_ID, not $WANT_ID — every installed copy would refuse it" >&2
+  exit 1; }
 
 echo "==> Architectures"
 lipo -info "$APP/Contents/MacOS/Blurt" | sed 's/^/    /'

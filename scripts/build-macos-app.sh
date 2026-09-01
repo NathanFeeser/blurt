@@ -119,6 +119,21 @@ if BUILD_NUMBER=$(git rev-list --count HEAD 2>/dev/null); then
   plutil -replace CFBundleVersion -string "$BUILD_NUMBER" "$APP/Contents/Info.plist"
 fi
 
+# Identity. A development build is a different app from the released one:
+# com.nerflabs.blurt.dev, shown as "Blurt Dev". macOS keys every kind of trust
+# on bundle id plus signature, and a dev build is signed differently from a
+# release — so one shared id meant the two fought over keychain items, TCC
+# entries, Sparkle state and the history database. Separate ids, and they can
+# be installed, trusted and run side by side. release-macos.sh passes the
+# plist's own id through BLURT_BUNDLE_ID; nothing else should.
+BUNDLE_ID="${BLURT_BUNDLE_ID:-$(plutil -extract CFBundleIdentifier raw "$APPDIR/Resources/Info.plist").dev}"
+plutil -replace CFBundleIdentifier -string "$BUNDLE_ID" "$APP/Contents/Info.plist"
+if [[ "$BUNDLE_ID" == *.dev ]]; then
+  plutil -replace CFBundleName -string "Blurt Dev" "$APP/Contents/Info.plist"
+  plutil -replace CFBundleDisplayName -string "Blurt Dev" "$APP/Contents/Info.plist"
+fi
+echo "==> Identity: $BUNDLE_ID"
+
 # The icon is committed, not generated here. scripts/make-icon.swift draws it and
 # is re-run only when the artwork changes; a build that shells out to a renderer
 # to produce an asset that almost never moves is a build with a slower inner loop

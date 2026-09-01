@@ -66,7 +66,9 @@ final class AppModel: ObservableObject {
     nonisolated static func defaultHistoryURL() -> URL {
         let base = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)
             .first ?? URL(fileURLWithPath: NSTemporaryDirectory())
-        return base.appendingPathComponent("Blurt/history.sqlite3")
+        // Named per build, so a development build never has the released
+        // app's database open from a second process.
+        return base.appendingPathComponent("\(AppIdentity.name)/history.sqlite3")
     }
 
     var historyEnabled: Bool {
