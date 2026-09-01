@@ -116,6 +116,13 @@ fi
 
 TAG="v$VERSION"
 
+# Baked into the appcast as the download location, so it is needed whether or
+# not this run publishes. From the git remote rather than gh: a local build
+# should not need GitHub's CLI just to know where releases live.
+REPO=$(git remote get-url origin | sed -E 's#^(git@github\.com:|https://github\.com/)##; s#\.git$##')
+[[ "$REPO" == */* ]] || {
+  echo "could not derive owner/repo from origin: $(git remote get-url origin)" >&2; exit 1; }
+
 # Publishing preflight runs here, with the rest, rather than at the end where the
 # work happens: every one of these is a five-minute build and a notarization
 # round trip away from being discovered otherwise.
@@ -154,13 +161,6 @@ if [[ "$PUBLISH" == "1" ]]; then
 
   echo "    publish:   $TAG to $REPO"
 fi
-
-# Baked into the appcast as the download location, so it is needed whether or
-# not this run publishes. From the git remote rather than gh: a local build
-# should not need GitHub's CLI just to know where releases live.
-REPO=$(git remote get-url origin | sed -E 's#^(git@github\.com:|https://github\.com/)##; s#\.git$##')
-[[ "$REPO" == */* ]] || {
-  echo "could not derive owner/repo from origin: $(git remote get-url origin)" >&2; exit 1; }
 
 # The release before this one, for the changes link. Resolved now, before the
 # new tag exists, so the newest reachable tag is the previous release.
