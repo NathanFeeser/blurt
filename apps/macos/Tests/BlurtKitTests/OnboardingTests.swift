@@ -128,6 +128,58 @@ struct OnboardingFlowTests {
         #expect(model.isFinished)
     }
 
+    @Test("Choosing where to transcribe never moves the screen on its own")
+    func transcriptionDoesNotAutoAdvance() {
+        isolateSettings()
+        let system = FakeSystem()
+        // Selecting on-device with a model already downloaded satisfies this
+        // step the instant it is clicked. Advancing on that would make the
+        // option impossible to read, let alone compare against the other one.
+        system.transcription = true
+
+        let model = OnboardingModel(environment: system.environment, startAt: .transcription)
+        model.refresh()
+        #expect(model.step == .transcription)
+    }
+
+    @Test("Walking back to a step that is already satisfied stays there")
+    func backIsNotUndoneByAutoAdvance() {
+        isolateSettings()
+        let system = FakeSystem()
+        system.mic = true
+        system.accessibility = true
+
+        let model = OnboardingModel(environment: system.environment, startAt: .accessibility)
+        model.back()
+        #expect(model.step == .microphone)
+
+        // Microphone is granted, so without the guard the next tick throws them
+        // straight back to where they just came from — and every tick after it.
+        model.refresh()
+        #expect(model.step == .microphone)
+    }
+
+    @Test("Continuing after going back restores auto-advance")
+    func advanceRestoresAutoAdvance() {
+        isolateSettings()
+        let system = FakeSystem()
+        system.transcription = true
+        system.mic = true
+
+        let model = OnboardingModel(environment: system.environment, startAt: .microphone)
+        model.back()
+        #expect(model.step == .transcription)
+
+        // Moving forward deliberately, which ends the reprieve.
+        model.advance()
+        // Microphone is granted, so it is skipped; accessibility is not.
+        #expect(model.step == .accessibility)
+
+        system.accessibility = true
+        model.refresh()
+        #expect(model.step == .inputDevice)
+    }
+
     @Test("Going back stops at the first screen")
     func backStopsAtWelcome() {
         isolateSettings()

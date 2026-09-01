@@ -121,19 +121,35 @@ final class OnboardingModel: ObservableObject {
     /// its own. Watching the screen advance the instant you flip a switch in
     /// System Settings is the difference between a flow that feels alive and one
     /// that feels like a form.
+    ///
+    /// Only the two permissions, because they are the only steps whose
+    /// requirement is met somewhere else. Transcription is configured right here
+    /// — and a screen that leaves the moment you pick an option is a screen you
+    /// cannot read. Selecting "On this Mac" with a model already downloaded
+    /// satisfies the step instantly, so this used to make that option
+    /// impossible to even look at.
     private var autoAdvances: Bool {
         switch step {
-        case .microphone, .accessibility, .transcription: return true
-        case .welcome, .inputDevice, .firstDictation: return false
+        case .microphone, .accessibility: return true
+        case .welcome, .transcription, .inputDevice, .firstDictation: return false
         }
     }
+
+    /// Set by `back`, cleared by `advance`.
+    ///
+    /// Auto-advance exists to carry somebody forward when the thing they just
+    /// granted lands. It has no business overruling somebody who deliberately
+    /// walked back to a screen: without this, Back onto an already-satisfied
+    /// step bounces straight forward again on the next tick, which is a flow
+    /// you cannot navigate backwards at all.
+    private var wentBack = false
 
     // MARK: - Movement
 
     /// Called on a timer while the flow is on screen, and after returning from
     /// System Settings. Advances if the current step got what it was waiting for.
     func refresh() {
-        guard autoAdvances, isSatisfied(step) else { return }
+        guard !wentBack, autoAdvances, isSatisfied(step) else { return }
         advance()
     }
 
@@ -148,6 +164,9 @@ final class OnboardingModel: ObservableObject {
 
     func advance() {
         guard canAdvance else { return }
+        // Moving forward on purpose ends the reprieve: from here on the flow
+        // may carry them again.
+        wentBack = false
         guard let next = Step(rawValue: step.rawValue + 1) else {
             complete()
             return
@@ -165,6 +184,7 @@ final class OnboardingModel: ObservableObject {
 
     func back() {
         guard let previous = Step(rawValue: step.rawValue - 1) else { return }
+        wentBack = true
         step = previous
     }
 
