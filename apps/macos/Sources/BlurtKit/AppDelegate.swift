@@ -132,10 +132,36 @@ public final class AppDelegate: NSObject, NSApplicationDelegate {
             }
             onboardingWindow.show()
             refreshMenu()
+            // Setup ends by asking for a real dictation, and building the audio
+            // graph for the first time takes seconds — long enough that someone
+            // presses the key, says a sentence and lets go before the
+            // microphone is open, and concludes the app does not work. The
+            // graph is normally warmed by `enableDictation`, which does not run
+            // until setup is over: too late for the step that needs it.
+            Task { await prewarmOnceMicrophoneIsGranted() }
             return
         }
 
         await enableDictation()
+    }
+
+    /// Waits for the microphone permission, then builds the audio graph without
+    /// opening the microphone — the orange indicator still lights only while
+    /// actually dictating.
+    ///
+    /// Polled because TCC posts no notification when a permission is granted,
+    /// on the same one-second cadence the setup flow itself uses to notice.
+    /// Bounded so an abandoned setup does not leave a task running for the life
+    /// of the process.
+    private func prewarmOnceMicrophoneIsGranted() async {
+        for _ in 0..<600 {
+            if Permissions.microphoneGranted() {
+                audio.prewarm()
+                Diag.log("audio graph prewarmed during setup")
+                return
+            }
+            try? await Task.sleep(nanoseconds: 1_000_000_000)
+        }
     }
 
     /// Everything that needs the permissions to already be in place. Split out
