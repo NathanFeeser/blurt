@@ -110,11 +110,35 @@ mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
 cp "$BIN" "$APP/Contents/MacOS/Blurt"
 cp "$APPDIR/Resources/Info.plist" "$APP/Contents/Info.plist"
 
+# Stamp the build number with the commit count, the same number a release
+# gets. Sparkle compares CFBundleVersion, and the source plist says 1: left
+# alone, every development build would be "older" than the newest public
+# release and would offer, daily, to replace itself with it. A build from HEAD
+# is at least as new as anything published from HEAD, so it never nags.
+if BUILD_NUMBER=$(git rev-list --count HEAD 2>/dev/null); then
+  plutil -replace CFBundleVersion -string "$BUILD_NUMBER" "$APP/Contents/Info.plist"
+fi
+
 # The icon is committed, not generated here. scripts/make-icon.swift draws it and
 # is re-run only when the artwork changes; a build that shells out to a renderer
 # to produce an asset that almost never moves is a build with a slower inner loop
 # and one more thing to go wrong.
 cp "$APPDIR/Resources/AppIcon.icns" "$APP/Contents/Resources/AppIcon.icns"
+
+# Sparkle: the one dynamic framework in the bundle, so it has to travel with
+# it. Taken from the package's downloaded artifact rather than from SwiftPM's
+# build products — the artifact is the one path that exists after any resolve,
+# and it serves both architectures because the XCFramework's macOS slice is
+# already universal. The executable finds it through the @executable_path
+# rpath declared in Package.swift.
+SPARKLE_SRC="$APPDIR/.build/artifacts/sparkle/Sparkle/Sparkle.xcframework/macos-arm64_x86_64/Sparkle.framework"
+if [[ ! -d "$SPARKLE_SRC" ]]; then
+  echo "Sparkle.framework not found at $SPARKLE_SRC" >&2
+  echo "Run: swift package --package-path $APPDIR resolve" >&2
+  exit 1
+fi
+mkdir -p "$APP/Contents/Frameworks"
+ditto "$SPARKLE_SRC" "$APP/Contents/Frameworks/Sparkle.framework"
 
 printf 'APPL????' > "$APP/Contents/PkgInfo"
 
@@ -147,15 +171,35 @@ if [[ "${BLURT_SECURE_TIMESTAMP:-}" == "1" ]]; then
   TIMESTAMP_FLAG="--timestamp"
 fi
 
-echo "==> Signing as: $IDENTITY"
 # No `|| true` fallback: a signing failure must be loud. Silently falling back to
 # an unentitled signature is what broke microphone access the first time.
 #
-# No --deep either. Everything SwiftPM produces here is statically linked, so
-# there is no nested code to recurse into, and Apple has deprecated the flag for
-# signing: it applies the same entitlements to every nested binary it finds,
-# which is wrong the moment one exists. Sparkle will bring nested code with it;
-# release-macos.sh signs inner-out explicitly when that happens.
+# No --deep either. Apple has deprecated it for signing, and for good reason: it
+# applies the outer entitlements to every nested binary it finds, which is wrong
+# for all four pieces of code inside Sparkle. Those are signed explicitly,
+# inner-out, below — and they must be. The framework ships without any team's
+# signature, and under the hardened runtime's library validation an app may
+# only load frameworks signed by its own team, so an unsigned Sparkle kills
+# the process at launch, before main(), with a dyld complaint about a team ID.
+# Order and flags are Sparkle's own; --preserve-metadata on the downloader
+# keeps whatever entitlements it carries for sandboxed hosts.
+#
+# An ad-hoc identity signs all of this too, but library validation may still
+# refuse the pairing. A real certificate is the supported path.
+SPARKLE="$APP/Contents/Frameworks/Sparkle.framework"
+echo "==> Signing Sparkle"
+for nested in \
+  "$SPARKLE/Versions/B/XPCServices/Installer.xpc" \
+  "$SPARKLE/Versions/B/Autoupdate" \
+  "$SPARKLE/Versions/B/Updater.app"
+do
+  codesign --force --sign "$IDENTITY" --options runtime $TIMESTAMP_FLAG "$nested"
+done
+codesign --force --sign "$IDENTITY" --options runtime --preserve-metadata=entitlements \
+  $TIMESTAMP_FLAG "$SPARKLE/Versions/B/XPCServices/Downloader.xpc"
+codesign --force --sign "$IDENTITY" --options runtime $TIMESTAMP_FLAG "$SPARKLE"
+
+echo "==> Signing as: $IDENTITY"
 codesign --force \
   --sign "$IDENTITY" \
   --options runtime \

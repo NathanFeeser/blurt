@@ -30,7 +30,7 @@ The macOS app is usable every day, today, by anyone willing to build it.
 The goal is a signed, notarized v0.1 that people can download and run without a
 toolchain.
 
-- [ ] **Developer ID signing, notarization, and Sparkle updates.** The actual
+- [x] **Developer ID signing, notarization, and Sparkle updates.** The actual
       gate on a public download.
 - [ ] **Streaming transcription** as a per-mode setting. Batch is substantially
       cheaper and is the right default; streaming is what removes the upload and

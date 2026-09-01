@@ -1,5 +1,6 @@
 import AppKit
 import BlurtCore
+import Sparkle
 
 @MainActor
 public final class AppDelegate: NSObject, NSApplicationDelegate {
@@ -7,6 +8,13 @@ public final class AppDelegate: NSObject, NSApplicationDelegate {
     private lazy var model = AppModel(engine: engine)
     private lazy var settingsWindow = SettingsWindow(model: model)
     private lazy var onboardingWindow = OnboardingWindow(model: model)
+
+    /// Sparkle. Created in `init` and held for the life of the process, which
+    /// is what it needs to schedule the daily background check — an updater
+    /// that only exists once somebody opens the menu never checks. The menu
+    /// item is the manual path.
+    private let updater: SPUStandardUpdaterController
+    private let updateFeed: UpdateFeed
     private let audio = AudioEngine()
     private let hotkey = HotkeyMonitor()
     private let commandHotkey = HotkeyMonitor()
@@ -52,7 +60,15 @@ public final class AppDelegate: NSObject, NSApplicationDelegate {
     /// model load (~8 s) plus a long dictation, and still bounded.
     private static let transcriptionTimeout: TimeInterval = 60
 
-    public override init() { super.init() }
+    public override init() {
+        // Assembled from a local because `self` is off limits until every
+        // stored property has a value, and the controller needs the delegate.
+        let feed = UpdateFeed()
+        updateFeed = feed
+        updater = SPUStandardUpdaterController(
+            startingUpdater: true, updaterDelegate: feed, userDriverDelegate: nil)
+        super.init()
+    }
 
     public func applicationDidFinishLaunching(_ notification: Notification) {
         Diag.log("applicationDidFinishLaunching")
@@ -718,6 +734,16 @@ public final class AppDelegate: NSObject, NSApplicationDelegate {
         menu.addItem(.separator())
         add(menu, "Set Up Blurt…", #selector(openOnboarding))
         add(menu, "Settings…", #selector(openSettings))
+        let check = NSMenuItem(
+            title: "Check for Updates…",
+            action: #selector(SPUStandardUpdaterController.checkForUpdates(_:)),
+            keyEquivalent: "")
+        check.target = updater
+        // Sparkle would do this itself through menu validation, but this menu
+        // runs with autoenablesItems off so the lines above can be disabled by
+        // hand, so the state has to be copied across here.
+        check.isEnabled = updater.updater.canCheckForUpdates
+        menu.addItem(check)
         add(menu, "Open Log", #selector(openLog))
         menu.addItem(.separator())
         add(menu, "Quit Blurt", #selector(NSApplication.terminate(_:)), target: NSApp)

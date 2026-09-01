@@ -6,6 +6,7 @@
 # Output:
 #   build/release/Blurt-X.Y.Z.dmg   <- what people download
 #   build/release/Blurt-X.Y.Z.zip   <- what Sparkle downloads
+#   build/release/appcast.xml       <- what installed copies poll
 #
 # With --publish it also tags the commit and creates the GitHub release, which
 # is the step that actually puts the .dmg somewhere a stranger can reach.
@@ -26,7 +27,12 @@
 #      xcrun notarytool store-credentials blurt-notary \
 #        --key AuthKey_XXXXXX.p8 --key-id XXXXXX --issuer <issuer-uuid>
 #
-#   3. For --publish only: the GitHub CLI, authenticated. `brew install gh`
+#   3. A Sparkle signing key in the keychain, matching SUPublicEDKey in
+#      Info.plist. Generated once with the package's generate_keys tool, and
+#      backed up — every installed copy checks updates against it, so losing
+#      it strands them all on whatever version they have.
+#
+#   4. For --publish only: the GitHub CLI, authenticated. `brew install gh`
 #      then `gh auth login`.
 set -euo pipefail
 cd "$(dirname "$0")/.."
@@ -146,9 +152,54 @@ if [[ "$PUBLISH" == "1" ]]; then
     exit 1
   fi
 
-  REPO=$(gh repo view --json nameWithOwner -q .nameWithOwner)
   echo "    publish:   $TAG to $REPO"
 fi
+
+# Baked into the appcast as the download location, so it is needed whether or
+# not this run publishes. From the git remote rather than gh: a local build
+# should not need GitHub's CLI just to know where releases live.
+REPO=$(git remote get-url origin | sed -E 's#^(git@github\.com:|https://github\.com/)##; s#\.git$##')
+[[ "$REPO" == */* ]] || {
+  echo "could not derive owner/repo from origin: $(git remote get-url origin)" >&2; exit 1; }
+
+# The release before this one, for the changes link. Resolved now, before the
+# new tag exists, so the newest reachable tag is the previous release.
+PREV=$(git describe --tags --abbrev=0 2>/dev/null || true)
+[[ "$PREV" != "$TAG" ]] || PREV=""
+
+SPARKLE_BIN="$APPDIR/.build/artifacts/sparkle/Sparkle/bin"
+if [[ ! -x "$SPARKLE_BIN/generate_appcast" ]]; then
+  echo "Sparkle's tools are missing. Run: swift package --package-path $APPDIR resolve" >&2
+  exit 1
+fi
+SPARKLE_KEY=$("$SPARKLE_BIN/generate_keys" -p 2>/dev/null \
+  | grep -oE '[A-Za-z0-9+/]{40,}={0,2}' | head -1 || true)
+if [[ -z "$SPARKLE_KEY" ]]; then
+  cat >&2 <<EOF
+No Sparkle signing key in the keychain. Generate one, once, and back it up:
+
+  $SPARKLE_BIN/generate_keys
+  $SPARKLE_BIN/generate_keys -x ~/somewhere-safe/blurt-sparkle.key
+
+Then put the SUPublicEDKey it prints into $PLIST.
+EOF
+  exit 1
+fi
+PLIST_KEY=$(plutil -extract SUPublicEDKey raw "$PLIST" 2>/dev/null || true)
+if [[ "$SPARKLE_KEY" != "$PLIST_KEY" ]]; then
+  cat >&2 <<EOF
+The Sparkle key in the keychain does not match SUPublicEDKey in $PLIST.
+
+  keychain:    $SPARKLE_KEY
+  Info.plist:  ${PLIST_KEY:-(missing)}
+
+Every installed copy verifies downloads against the key it shipped with. An
+update signed with any other key is refused as tampered — by every user, with
+no way back short of a manual reinstall. Not publishing this.
+EOF
+  exit 1
+fi
+echo "    sparkle:   key matches Info.plist"
 
 echo "    version:   $VERSION ($BUILD_NUMBER)"
 
@@ -259,6 +310,55 @@ if [[ "$SKIP_NOTARIZE" == "0" ]]; then
 fi
 
 # ---------------------------------------------------------------------------
+# The appcast: what every installed copy polls to learn this version exists.
+#
+# Generated from the stapled zip, because the EdDSA signature and the length
+# in the feed cover exact bytes and the zip was rebuilt after stapling. And
+# generated in a scratch directory holding only that zip: generate_appcast
+# turns every archive it finds into a feed item, and the DMG beside it is the
+# same version twice. So the feed lists exactly one version — the newest —
+# which is all Sparkle needs to answer "is there something newer than me?".
+#
+# SUFeedURL is GitHub's latest/download/appcast.xml, which redirects to this
+# release's copy. Uploading the file with the release is the whole act of
+# publishing the update.
+# ---------------------------------------------------------------------------
+echo
+echo "==> Generating the appcast"
+FEED_STAGE=$(mktemp -d)
+trap 'rm -rf "$STAGE" "$FEED_STAGE"' EXIT
+cp "$ZIP" "$FEED_STAGE/"
+# Shown inside the update dialog. A fragment without <body>, which is what
+# makes generate_appcast embed it rather than link to it.
+{
+  echo "<h2>Blurt $VERSION</h2>"
+  echo "<p>Signed with a Developer ID certificate and notarized by Apple."
+  echo "<a href=\"https://github.com/$REPO/releases/tag/$TAG\">Release notes on GitHub.</a></p>"
+  if [[ -n "$PREV" ]]; then
+    echo "<p><a href=\"https://github.com/$REPO/compare/$PREV...$TAG\">Every change since $PREV.</a></p>"
+  fi
+} > "$FEED_STAGE/Blurt-$VERSION.html"
+# Reads the private key from the keychain; macOS may ask once.
+"$SPARKLE_BIN/generate_appcast" \
+  --download-url-prefix "https://github.com/$REPO/releases/download/$TAG/" \
+  --link "https://github.com/$REPO/releases/tag/$TAG" \
+  -o "$RELEASE/appcast.xml" \
+  "$FEED_STAGE"
+APPCAST="$RELEASE/appcast.xml"
+# The feed must name this exact version, or installed copies will never see it.
+grep -q "sparkle:version=\"$BUILD_NUMBER\"" "$APPCAST" \
+  || grep -q "<sparkle:version>$BUILD_NUMBER</sparkle:version>" "$APPCAST" \
+  || { echo "appcast does not list build $BUILD_NUMBER" >&2; exit 1; }
+# generate_appcast infers hardware requirements from the slices in the zip. A
+# universal build yields none; an arm64-only one yields a feed that every
+# Intel Mac silently ignores, forever, with nothing in the app to say why.
+if grep -q "sparkle:hardwareRequirements" "$APPCAST"; then
+  echo "appcast restricts hardware — the release binary is not universal:" >&2
+  grep "sparkle:hardwareRequirements" "$APPCAST" >&2
+  exit 1
+fi
+
+# ---------------------------------------------------------------------------
 # Publish. Tag first: if the upload fails the tag is still the record of what
 # was built, and `gh release create` can be re-run against it by hand.
 # ---------------------------------------------------------------------------
@@ -282,14 +382,14 @@ or run a model on your Mac), Microphone, and Accessibility. **Accessibility is
 not optional** — without it the hotkey installs successfully and then silently
 never fires, so setup will not let you past it.
 
-Requires macOS 13 or newer.
+Requires macOS 13 or newer. Installed copies from 0.1.3 on update themselves.
 EOF
-    if PREV=$(git describe --tags --abbrev=0 "$TAG^" 2>/dev/null); then
+    if [[ -n "$PREV" ]]; then
       printf '\n**Changes:** https://github.com/%s/compare/%s...%s\n' "$REPO" "$PREV" "$TAG"
     fi
   } > "$NOTES"
 
-  gh release create "$TAG" "$DMG" "$ZIP" \
+  gh release create "$TAG" "$DMG" "$ZIP" "$APPCAST" \
     --title "Blurt $VERSION" \
     --notes-file "$NOTES"
   rm -f "$NOTES"
@@ -298,6 +398,7 @@ fi
 echo
 echo "OK  $DMG"
 echo "OK  $ZIP"
+echo "OK  $APPCAST"
 if [[ "$PUBLISH" == "1" ]]; then
   echo "OK  $(gh release view "$TAG" --json url -q .url)"
 fi

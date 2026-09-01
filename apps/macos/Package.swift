@@ -10,7 +10,11 @@ let package = Package(
     dependencies: [
         // WhisperKit runs Whisper on the Neural Engine via CoreML. Pinned to a
         // minor version: it is the piece most likely to move underneath us.
-        .package(url: "https://github.com/argmaxinc/argmax-oss-swift.git", from: "1.1.0")
+        .package(url: "https://github.com/argmaxinc/argmax-oss-swift.git", from: "1.1.0"),
+        // Sparkle delivers updates to installs outside the App Store, which is
+        // the only kind this app has. Arrives as a prebuilt XCFramework that the
+        // build script copies into the bundle and re-signs.
+        .package(url: "https://github.com/sparkle-project/Sparkle", from: "2.6.0"),
     ],
     targets: [
         .binaryTarget(
@@ -34,13 +38,21 @@ let package = Package(
             dependencies: [
                 "BlurtCore",
                 .product(name: "WhisperKit", package: "argmax-oss-swift"),
+                .product(name: "Sparkle", package: "Sparkle"),
             ],
             path: "Sources/BlurtKit"
         ),
         .executableTarget(
             name: "Blurt",
             dependencies: ["BlurtKit"],
-            path: "Sources/Blurt"
+            path: "Sources/Blurt",
+            // Sparkle is a dynamic framework, and this executable is copied
+            // into a hand-assembled .app bundle. Without this rpath the loader
+            // only knows the build directory the framework was linked from,
+            // which does not exist on anybody else's Mac.
+            linkerSettings: [
+                .unsafeFlags(["-Xlinker", "-rpath", "-Xlinker", "@executable_path/../Frameworks"])
+            ]
         ),
         .testTarget(
             name: "BlurtKitTests",

@@ -29,6 +29,25 @@
     <key>LSUIElement</key>
     <true/>
 
+    <!-- Sparkle. The feed is GitHub's "latest/download" URL, which redirects to
+         the newest release's copy of appcast.xml — so uploading that file with
+         a release is the whole act of publishing an update: nothing to commit,
+         no second host to keep alive. The public key checks the EdDSA
+         signature on every download; its private half lives only in the
+         release machine's keychain. release-macos.sh refuses to publish if
+         the two ever disagree. -->
+    <key>SUFeedURL</key>
+    <string>https://github.com/NathanFeeser/blurt/releases/latest/download/appcast.xml</string>
+    <key>SUPublicEDKey</key>
+    <string>hpp1kyKe8wgDR44laPtpWC7cJBC4P2u4jjJl1OjVvG4=</string>
+
+    <!-- Check once a day without asking first. Sparkle's default is a
+         permission dialog on the second launch, which would land on somebody
+         who has just finished setup. The check is one GET for the appcast and
+         system profiling stays off. See README, Privacy. -->
+    <key>SUEnableAutomaticChecks</key>
+    <true/>
+
     <key>NSMicrophoneUsageDescription</key>
     <string>Blurt records your voice while you hold the dictation key, and sends it to the transcription provider you configured.</string>
 

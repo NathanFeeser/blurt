@@ -173,6 +173,17 @@ reclaims the pages rather than leaving the text sitting there recoverable.
 There is no telemetry. No analytics code exists in this repo. If that ever
 changes it will be opt-in, granular, and inspectable in the UI.
 
+Update checks are the one thing the app does on its own. Once a day it fetches
+a small XML file from this repository's GitHub releases to see whether a newer
+version exists. That is one request, carrying nothing about you or your Mac
+beyond what any HTTP request carries; Sparkle's system profiling is off and
+stays off. Updates are signed, and the app refuses one whose signature doesn't
+match the key it shipped with. To stop the daily check:
+
+```bash
+defaults write com.nerflabs.blurt SUEnableAutomaticChecks -bool NO
+```
+
 On-device modes never silently fall back to a hosted provider. A mode chosen for
 privacy fails loudly instead, and there's a test that enforces it.
 
@@ -184,7 +195,7 @@ crates/blurt-cli/     `blurt`, the terminal driver the eval harness uses
 apps/macos/           menu bar app: hotkey, capture, AX context, insertion
 eval/                 DictBench: cases, graders, findings
 swift/SmokeTest/      proves the Rust/Swift boundary works
-scripts/              xcframework build, app build, release, icon, smoke test
+scripts/              xcframework build, app build, release, update rehearsal, icon
 docs/                 architecture, research, internal plan
 ```
 
