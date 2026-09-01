@@ -155,12 +155,22 @@ final class OnboardingModel: ObservableObject {
 
     /// Steps that are shown every time regardless of state.
     ///
-    /// The other steps ask for something and can be skipped once they have it.
-    /// These three do not: `welcome` explains, `inputDevice` confirms a choice
-    /// that is always technically made but frequently wrong, and
-    /// `firstDictation` is the entire point — a setup flow that ends without the
-    /// user seeing it work has not verified anything.
-    private static let alwaysShown: Set<Step> = [.welcome, .inputDevice, .firstDictation]
+    /// The other steps ask for a permission and can be skipped once they have
+    /// it, because re-asking for something granted last week reads as an app
+    /// that is not paying attention. These four are not permissions:
+    ///
+    ///   * `welcome` explains.
+    ///   * `transcription` is a preference rather than a grant. Skipping it
+    ///     whenever a key happens to exist hides the on-device option from
+    ///     exactly the people most likely to want it — everyone who pasted a
+    ///     key before they knew there was a choice.
+    ///   * `inputDevice` confirms a choice that is always technically made and
+    ///     frequently wrong.
+    ///   * `firstDictation` is the entire point. A setup flow that ends without
+    ///     the user seeing it work has verified nothing.
+    private static let alwaysShown: Set<Step> = [
+        .welcome, .transcription, .inputDevice, .firstDictation,
+    ]
 
     func advance() {
         guard canAdvance else { return }

@@ -12,6 +12,10 @@ import AppKit
 /// The items deliberately have no target. A nil target sends the action down
 /// the responder chain, which is what lands it on whichever text field is
 /// focused; wiring them to anything specific would break that.
+///
+/// Main-actor isolated because `NSApplication.mainMenu` is, and because menus
+/// are UI: building one off the main thread is not something to do quietly.
+@MainActor
 enum MainMenu {
 
     static func install(on app: NSApplication) {

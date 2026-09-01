@@ -99,7 +99,25 @@ struct OnboardingFlowTests {
 
         let model = OnboardingModel(environment: system.environment, startAt: .welcome)
         model.advance()
+        // Transcription is always offered, so it comes first.
+        #expect(model.step == .transcription)
+
+        model.advance()
+        // Both permissions are granted, so neither is asked for again.
         #expect(model.step == .inputDevice)
+    }
+
+    @Test("The transcription choice is offered even when a key is already saved")
+    func transcriptionIsAlwaysOffered() {
+        isolateSettings()
+        let system = FakeSystem()
+        system.transcription = true
+        system.mic = true
+        system.accessibility = true
+
+        let model = OnboardingModel(environment: system.environment, startAt: .welcome)
+        model.advance()
+        #expect(model.step == .transcription)
     }
 
     @Test("The first dictation is never skipped, even when everything else is done")

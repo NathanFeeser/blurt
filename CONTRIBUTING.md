@@ -13,7 +13,7 @@ Nothing else — no package manager, no `.xcodeproj`.
 ./scripts/build-xcframework.sh       # just the Rust core as an XCFramework
 ./scripts/swift-smoke.sh             # exercises the Rust <-> Swift boundary
 cargo test --all                     # 95 core tests
-swift test --package-path apps/macos # 75 app tests
+swift test --package-path apps/macos # 79 app tests
 ```
 
 `swift-smoke.sh` is not part of the app build, so run it after changing anything
