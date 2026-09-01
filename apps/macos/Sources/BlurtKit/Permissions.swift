@@ -23,6 +23,13 @@ enum Permissions {
         AVCaptureDevice.authorizationStatus(for: .audio) == .authorized
     }
 
+    /// Distinct from "not granted": macOS never re-prompts after a refusal, so
+    /// a denied state has to send the user to System Settings rather than
+    /// offering a button that would do nothing.
+    static func microphoneDenied() -> Bool {
+        AVCaptureDevice.authorizationStatus(for: .audio) == .denied
+    }
+
     static func requestMicrophone() async -> Bool {
         if microphoneGranted() { return true }
         return await AVCaptureDevice.requestAccess(for: .audio)

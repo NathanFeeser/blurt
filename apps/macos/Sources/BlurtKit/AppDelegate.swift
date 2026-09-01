@@ -6,6 +6,7 @@ public final class AppDelegate: NSObject, NSApplicationDelegate {
     private let engine = DictationEngine()
     private lazy var model = AppModel(engine: engine)
     private lazy var settingsWindow = SettingsWindow(model: model)
+    private lazy var onboardingWindow = OnboardingWindow(model: model)
     private let audio = AudioEngine()
     private let hotkey = HotkeyMonitor()
     private let commandHotkey = HotkeyMonitor()
@@ -117,6 +118,29 @@ public final class AppDelegate: NSObject, NSApplicationDelegate {
 
     private func startUp() async {
         Diag.log("startUp begin; mic status=\(Permissions.statusDescription())")
+
+        // When the setup flow is about to appear, the permission prompts are
+        // its job rather than ours. Firing them from here first is exactly how
+        // you get a denial: a dialog asking to read every app you use, with no
+        // explanation in front of it, is one people say no to — and macOS never
+        // asks a second time.
+        if OnboardingModel.shouldPresentAtLaunch(in: .live(model: model)) {
+            Diag.log("setup incomplete; presenting the first-run flow")
+            onboardingWindow.onFinish = { [weak self] in
+                guard let self else { return }
+                Task { await self.enableDictation() }
+            }
+            onboardingWindow.show()
+            refreshMenu()
+            return
+        }
+
+        await enableDictation()
+    }
+
+    /// Everything that needs the permissions to already be in place. Split out
+    /// of `startUp` so the setup flow can call it once it has collected them.
+    private func enableDictation() async {
         let mic = await Permissions.requestMicrophone()
         Diag.log("requestMicrophone -> \(mic); status now=\(Permissions.statusDescription())")
         if !mic {
@@ -492,6 +516,9 @@ public final class AppDelegate: NSObject, NSApplicationDelegate {
             at: Date(),
             entryId: result.entryId
         )
+        // The setup flow's last step waits on this: a transcription that
+        // actually landed somewhere is the only proof the chain works.
+        NotificationCenter.default.post(name: .blurtDictationCompleted, object: nil)
         // Which strategy landed is only knowable here, and it is the first thing
         // worth looking at when someone reports text going into the wrong place.
         if let entryId = result.entryId {
@@ -663,6 +690,7 @@ public final class AppDelegate: NSObject, NSApplicationDelegate {
         }
 
         menu.addItem(.separator())
+        add(menu, "Set Up Blurt…", #selector(openOnboarding))
         add(menu, "Settings…", #selector(openSettings))
         add(menu, "Open Log", #selector(openLog))
         menu.addItem(.separator())
@@ -681,6 +709,7 @@ public final class AppDelegate: NSObject, NSApplicationDelegate {
 
     // MARK: - Actions
 
+    @objc private func openOnboarding() { onboardingWindow.show() }
     @objc private func openAccessibility() { Permissions.openAccessibilitySettings() }
     @objc private func openMicrophone() { Permissions.openMicrophoneSettings() }
 

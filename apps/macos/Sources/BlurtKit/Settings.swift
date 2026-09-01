@@ -26,6 +26,7 @@ enum Settings {
         static let historyEnabled = "historyEnabled"
         static let historyLimit = "historyLimit"
         static let baseUrlPrefix = "baseUrl."
+        static let onboardingCompletedVersion = "onboardingCompletedVersion"
     }
 
     static func registerDefaults() {
@@ -171,6 +172,17 @@ enum Settings {
     static var historyLimit: Int {
         get { max(1, d.integer(forKey: Key.historyLimit)) }
         set { d.set(max(1, newValue), forKey: Key.historyLimit) }
+    }
+
+    /// Which version of the first-run flow this user has finished.
+    ///
+    /// A version rather than a flag: a later redesign of onboarding can be shown
+    /// to existing users by bumping `OnboardingModel.currentVersion`, without
+    /// that also meaning "show setup again on every launch". Zero means never
+    /// completed.
+    static var onboardingCompletedVersion: Int {
+        get { d.integer(forKey: Key.onboardingCompletedVersion) }
+        set { d.set(newValue, forKey: Key.onboardingCompletedVersion) }
     }
 
     /// Optional custom endpoint per provider. Empty means "use the built-in

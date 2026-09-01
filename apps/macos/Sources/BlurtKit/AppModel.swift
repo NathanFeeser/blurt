@@ -319,6 +319,23 @@ final class AppModel: ObservableObject {
         KeychainStore.get(for: provider)?.isEmpty == false
     }
 
+    /// Whether transcription could actually run right now.
+    ///
+    /// "Configured" has to mean usable rather than merely chosen: an on-device
+    /// model that is still downloading has been picked but cannot transcribe a
+    /// word, and letting setup finish on one would hand the user a working
+    /// hotkey attached to nothing. A custom base URL counts on its own — local
+    /// endpoints like Ollama and LM Studio take no key.
+    var isTranscriptionConfigured: Bool {
+        switch transcriptionSource {
+        case .onDevice:
+            if case .ready = localState { return true }
+            return false
+        case .cloud(let providerId):
+            return hasKey(for: providerId) || !Settings.baseUrl(for: providerId).isEmpty
+        }
+    }
+
     // MARK: - Mode editing
 
     func addMode() {

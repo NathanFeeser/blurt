@@ -783,4 +783,7 @@ struct GesturesTab: View {
 extension Notification.Name {
     static let blurtHotkeysChanged = Notification.Name("blurtHotkeysChanged")
     static let blurtInputDeviceChanged = Notification.Name("blurtInputDeviceChanged")
+    /// A transcription actually landed somewhere. The setup flow's last step
+    /// waits on this: it is the only proof the whole chain works.
+    static let blurtDictationCompleted = Notification.Name("blurtDictationCompleted")
 }
