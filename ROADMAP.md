@@ -24,14 +24,46 @@ The macOS app is usable every day, today, by anyone willing to build it.
 - Local history with search, re-run, and undo
 - Microphone pinning, so a Bluetooth headset cannot quietly take over dictation
 - Keychain key storage, a settings UI, and a test suite across both languages
+- Signed, notarized, universal releases that install from a `.dmg` and update
+  themselves through Sparkle
+- A first-run setup flow that refuses to advance until each thing it asked for
+  is actually true, and ends with a real dictation
 
-## Now — finishing the macOS app
+## Now — quality you can prove
 
-The goal is a signed, notarized v0.1 that people can download and run without a
-toolchain.
+The macOS app is done for now: it installs, updates itself, and explains
+itself. What it needs next is evidence, not features.
 
-- [x] **Developer ID signing, notarization, and Sparkle updates.** The actual
-      gate on a public download.
+[DictBench](eval/) exists and already settled one real question (see
+`eval/FINDINGS.md`), but it is text-only and small. In order:
+
+- [ ] **CI gate on prompt and model changes**, so a prompt edit that regresses
+      "leave clean text alone" fails the build. Cheapest, and the most
+      protection per hour of anything here.
+- [ ] **An LLM grader for voice and style.** Deterministic assertions cannot tell
+      you that a rewrite is technically correct and sounds nothing like you.
+- [ ] **Latency instrumentation** enforcing the budget in
+      `docs/ARCHITECTURE.md` rather than trusting that it holds. Every dictation
+      already logs its timings; this is aggregation and an assertion.
+- [ ] **Audio-level cases.** Every case today feeds clean text to the cleanup
+      stage, so an entire class of failure — degraded microphone, clipped audio,
+      background noise — is invisible to the suite. A real quality regression
+      caused by a Bluetooth microphone went undetected by every passing case.
+- [ ] **A published benchmark table** comparing provider and prompt combinations.
+      Nobody has a good public benchmark for dictation as opposed to
+      transcription, and building one in the open is worth more than any feature
+      on this list.
+
+Underneath all of it: cases come from real dictations that went wrong. History
+keeps the raw transcript beside the final text, which is what makes a bad
+dictation a cheap test case.
+
+## macOS — nice to have
+
+Each of these improves quality or breadth, and each waits for evidence from real
+use that it matters. None is a prerequisite for anything else here, and the app
+is deliberately not growing until something is.
+
 - [ ] **Streaming transcription** as a per-mode setting. Batch is substantially
       cheaper and is the right default; streaming is what removes the upload and
       most of the transcription time from the critical path, which is the
@@ -39,40 +71,21 @@ toolchain.
 - [ ] **Deeper screen-context scraping.** What exists is shallow. This is where
       most of the perceived intelligence lives.
 - [ ] **More providers** — ElevenLabs and Qwen adapters.
-- [ ] **Onboarding** that explains the Accessibility prompt honestly instead of
-      hoping people click through it.
-
-## Next — quality you can prove
-
-[DictBench](eval/) exists and already settled one real question (see
-`eval/FINDINGS.md`), but it is text-only and small.
-
-- [ ] **An LLM grader for voice and style.** Deterministic assertions cannot tell
-      you that a rewrite is technically correct and sounds nothing like you.
-- [ ] **Audio-level cases.** Every case today feeds clean text to the cleanup
-      stage, so an entire class of failure — degraded microphone, clipped audio,
-      background noise — is invisible to the suite. A real quality regression
-      caused by a Bluetooth microphone went undetected by every passing case.
-- [ ] **CI gate on prompt and model changes**, so a prompt edit that regresses
-      "leave clean text alone" fails the build.
-- [ ] **Latency instrumentation** enforcing the budget in
-      `docs/ARCHITECTURE.md` rather than trusting that it holds.
-- [ ] **A published benchmark table** comparing provider and prompt combinations.
-      Nobody has a good public benchmark for dictation as opposed to
-      transcription, and building one in the open is worth more than any feature
-      on this list.
 
 ## Later — the other platforms
 
-- [ ] **iOS.** The hard one, and the reason the core is portable. The container
-      app owns the microphone and a keyboard extension triggers it over an App
-      Group; the mic restriction is kernel-enforced and not negotiable. If the
-      round trip feels bad, iOS ships as an app-first experience instead of a
-      keyboard.
-- [ ] **Windows.** A native shell over the same core: clipboard injection with
-      save and restore, a low-level keyboard hook, UI Automation for context.
-      The core already compiles and tests on Windows in CI so that this stays a
-      UI project rather than a rewrite.
+- [ ] **Windows.** First, because the macOS value proposition translates: a
+      native shell over the same core, clipboard injection with save and
+      restore, a low-level keyboard hook, UI Automation for context. The core
+      already compiles and tests on Windows in CI so that this stays a UI
+      project rather than a rewrite.
+- [ ] **iOS.** The hard one, and deferred on purpose: iOS has no system-wide
+      text insertion, and ships excellent free dictation one tap from every
+      keyboard, so the wedge is narrower. The container app owns the microphone
+      and a keyboard extension triggers it over an App Group; the mic
+      restriction is kernel-enforced and not negotiable. Before any app, a
+      throwaway spike on whether that round trip feels acceptable. If it does
+      not, iOS ships as an app-first experience instead of a keyboard.
 
 ## Someday — a model of our own
 
