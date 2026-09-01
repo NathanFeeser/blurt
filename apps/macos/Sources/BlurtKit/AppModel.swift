@@ -305,6 +305,9 @@ final class AppModel: ObservableObject {
 
     func setKey(_ value: String?, for provider: String) {
         KeychainStore.set(value, for: provider)
+        // `KeychainStore.set` deletes the item for a nil or empty value, so
+        // this mirrors what is now actually stored.
+        keyPresence[provider] = value?.isEmpty == false
         credentialsRevision += 1
         apply()
     }
@@ -315,8 +318,30 @@ final class AppModel: ObservableObject {
         apply()
     }
 
+    /// Whether a provider has a key, remembered rather than re-read.
+    ///
+    /// This is asked from places that run constantly: the status menu rebuilds
+    /// on every application switch and asks twice, the setup flow's timer asks
+    /// once a second, and a settings view asks on every render. Each call used
+    /// to be a keychain read.
+    ///
+    /// A keychain read is not free and is not always silent. When the running
+    /// binary is not the one that created the item — a different signing
+    /// identity, which is every developer moving between a local build and a
+    /// released one — macOS puts up a modal password prompt per read. That
+    /// turned switching applications into a login password prompt, several
+    /// times over. Whether the prompt is warranted is between the user and the
+    /// keychain; asking hundreds of times is ours.
+    ///
+    /// `setKey` is the only thing in this app that changes a key, so it updates
+    /// the cache directly and nothing else can make it stale.
+    private var keyPresence: [String: Bool] = [:]
+
     func hasKey(for provider: String) -> Bool {
-        KeychainStore.get(for: provider)?.isEmpty == false
+        if let known = keyPresence[provider] { return known }
+        let present = KeychainStore.get(for: provider)?.isEmpty == false
+        keyPresence[provider] = present
+        return present
     }
 
     /// Whether transcription could actually run right now.
